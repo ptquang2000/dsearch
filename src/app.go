@@ -74,7 +74,7 @@ func Run() {
 ///////////////////////////////////////////////////////////////////////////////
 
 func (m *model) Init() tea.Cmd {
-	log.Println("BubbleTea init")
+	log.Println("Initializing")
 	return tea.Batch(
 		tea.SetWindowTitle("DSearch"),
 		textinput.Blink,
@@ -106,7 +106,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.count = msg.count
 		return m, onRefreshView(m.sigRefreshed)
 	case EntriesLoadedMsg:
-		log.Printf("Finished loading all entries")
+		log.Println("Finished loading all entries")
 		m.head = msg.head
 		m.count = msg.count
 		return m, onRefreshView(m.sigRefreshed)
@@ -120,7 +120,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, onRefreshView(m.sigRefreshed)
 	case FilterStopMsg:
 		log.Println("Filter execution was stopped")
-		return m, nil
 	default:
 		log.Println("Update")
 	}

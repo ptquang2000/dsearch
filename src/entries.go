@@ -18,11 +18,13 @@ type Entries struct {
 	sigEntry    chan *Entry
 	storage     map[string]*Entry
 	list        []*Entry
+	count       atomic.Int32
 	head        *Entry
 	fzfDelegate FzfDelegate
-	wg          sync.WaitGroup
-	state       atomic.Int32
-	count       atomic.Int32
+
+	mutex sync.Mutex
+	wg    sync.WaitGroup
+	state atomic.Int32
 }
 type FilteredState struct {
 	head         *Entry
@@ -69,21 +71,35 @@ func (p *Entries) LoadEntries(sigRefreshed chan RefreshedMsg) tea.Cmd {
 
 func (p *Entries) appendEntry(sig chan RefreshedMsg) {
 	entry := <-p.sigEntry
+	p.mutex.Lock()
 	p.list = append(p.list, entry)
 	p.storage[entry.name] = entry
-	p.head = entry
-	p.count.Store(int32(len(p.list)))
+	p.mutex.Unlock()
 
-	sig <- RefreshedMsg{head: p.head, count: int(p.count.Load())}
+	p.count.Store(int32(len(p.list)))
+	msg := RefreshedMsg{head: p.list[0], count: int(p.count.Load())}
+	send(sig, msg, p.state.Load() != int32(Filtering))
+
 	for entry := range p.sigEntry {
+		p.mutex.Lock()
 		p.list[len(p.list)-1].next = entry
 		p.list = append(p.list, entry)
 		p.storage[entry.name] = entry
+		p.mutex.Unlock()
+
 		p.count.Store(int32(len(p.list)))
-		select {
-		case sig <- RefreshedMsg{head: p.head, count: int(p.count.Load())}:
-		default:
-		}
+		msg := RefreshedMsg{head: p.list[0], count: int(p.count.Load())}
+		send(sig, msg, p.state.Load() != int32(Filtering))
+	}
+}
+
+func send(sig chan RefreshedMsg, msg RefreshedMsg, skip bool) {
+	if skip {
+		return
+	}
+	select {
+	case sig <- msg:
+	default:
 	}
 }
 
@@ -142,12 +158,18 @@ func (p *Entries) loopEntries(input chan string, count int) {
 
 func (p *Entries) processFilteredEntry(state *FilteredState, name string) {
 	if state.head == nil {
+		p.mutex.Lock()
 		state.head = p.storage[name]
+		p.mutex.Unlock()
+
 		state.head.next = nil
 		state.iter = state.head
 		state.count = 1
 	} else {
+		p.mutex.Lock()
 		state.iter.next = p.storage[name]
+		p.mutex.Unlock()
+
 		state.iter = state.iter.next
 		state.iter.next = nil
 		state.count += 1
