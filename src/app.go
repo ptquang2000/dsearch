@@ -13,6 +13,7 @@ import (
 
 ///////////////////////////////////////////////////////////////////////////////
 
+type SigRefresh chan RefreshingMsg
 type model struct {
 	ready  bool
 	height int
@@ -21,28 +22,22 @@ type model struct {
 	entries   Entries
 	textInput textinput.Model
 
-	sigRefreshed chan RefreshedMsg
-	head         *Entry
-	count        int
-	cursor       int
+	sigRefresh SigRefresh
+	head       *Entry
+	count      int32
+	cursor     int32
 }
-type RefreshedMsg struct {
+type RefreshingMsg struct {
 	head  *Entry
-	count int
+	count int32
 }
-type EntriesLoadedMsg struct {
+type LoadedMsg struct{}
+type FilteredMsg struct {
 	head  *Entry
-	count int
+	count int32
 }
-type FilterFinMsg struct {
-	head  *Entry
-	count int
-}
-type FilterStopMsg struct {
-	head  *Entry
-	count int
-}
-type NewQueryMsg struct {
+type StoppedMsg struct{}
+type QueryMsg struct {
 	query string
 }
 
@@ -61,9 +56,9 @@ func Run() {
 	}
 
 	p := tea.NewProgram(&model{
-		entries:      NewEntries(),
-		sigRefreshed: make(chan RefreshedMsg),
-		cursor:       0,
+		entries:    NewEntries(),
+		sigRefresh: make(SigRefresh),
+		cursor:     0,
 	})
 	if _, err := p.Run(); err != nil {
 		log.Printf("Alas, there's been an error: %v", err)
@@ -78,8 +73,8 @@ func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.SetWindowTitle("DSearch"),
 		textinput.Blink,
-		onRefreshView(m.sigRefreshed),
-		m.entries.LoadEntries(m.sigRefreshed),
+		onViewRefreshed(m.sigRefresh),
+		m.entries.LoadEntries(m.sigRefresh),
 	)
 }
 
@@ -101,24 +96,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.onWindowReady()
 			m.ready = true
 		}
-	case RefreshedMsg:
+	case RefreshingMsg:
 		m.head = msg.head
 		m.count = msg.count
-		return m, onRefreshView(m.sigRefreshed)
-	case EntriesLoadedMsg:
-		log.Println("Finished loading all entries")
-		m.head = msg.head
-		m.count = msg.count
-		return m, onRefreshView(m.sigRefreshed)
-	case NewQueryMsg:
+		return m, onViewRefreshed(m.sigRefresh)
+	case LoadedMsg:
+		log.Println("Finished to load all entries")
+		return m, onViewRefreshed(m.sigRefresh)
+	case QueryMsg:
 		log.Println("Received new query: ", msg.query)
-		return m, m.entries.FilterEntry(m.sigRefreshed, msg.query)
-	case FilterFinMsg:
-		log.Println("Finished filtering entries")
+		return m, m.entries.FilterEntry(m.sigRefresh, msg.query)
+	case FilteredMsg:
+		log.Println("Finished to filter query")
 		m.head = msg.head
 		m.count = msg.count
-		return m, onRefreshView(m.sigRefreshed)
-	case FilterStopMsg:
+		return m, onViewRefreshed(m.sigRefresh)
+	case StoppedMsg:
 		log.Println("Filter execution was stopped")
 	default:
 		log.Println("Update")
@@ -128,9 +121,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func onRefreshView(sigRefreshed chan RefreshedMsg) tea.Cmd {
+func onViewRefreshed(sigRefreshed chan RefreshingMsg) tea.Cmd {
 	return func() tea.Msg {
-		return RefreshedMsg(<-sigRefreshed)
+		return RefreshingMsg(<-sigRefreshed)
 	}
 }
 
@@ -160,8 +153,8 @@ func (m *model) onTextInputChanged(msg tea.Msg) tea.Cmd {
 
 func (m *model) onFilterRequested(query string) tea.Cmd {
 	return func() tea.Msg {
-		m.entries.Stop()
-		return NewQueryMsg{query: query}
+		m.entries.StopFilter()
+		return QueryMsg{query: query}
 	}
 }
 
@@ -201,20 +194,21 @@ func (m *model) View() string {
 
 	sb.WriteString(fmt.Sprintf("\n%s\n\n", m.textInput.View()))
 
-	limit := m.height - 6
-	start := max(0, m.cursor+1-limit)
+	limit := int32(m.height) - 6
+	start := max(int32(0), m.cursor+1-limit)
 	end := max(limit, m.cursor+1)
+
 	head := m.head
-	for i := start; i < m.count && i < end; i++ {
-		if head == nil {
-			break
-		}
+	for i := int32(0); i < start && head != nil; i++ {
+		head = head.fnext
+	}
+	for i := start; i < m.count && i < end && head != nil; i++ {
 		cursor := " "
 		if m.cursor == i {
 			cursor = ">"
 		}
 		sb.WriteString(fmt.Sprintf("%s %s\n", cursor, head.name))
-		head = head.next
+		head = head.fnext
 	}
 
 	sb.WriteString("\nPress Esc to quit.\n")

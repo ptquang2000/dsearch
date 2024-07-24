@@ -12,34 +12,33 @@ import (
 type Entry struct {
 	name   string
 	action func()
-	next   *Entry
+
+	next  *Entry // next entry
+	fnext *Entry // next filtered entry
 }
 type Entries struct {
-	sigEntry    chan *Entry
-	storage     map[string]*Entry
-	list        []*Entry
-	count       atomic.Int32
-	head        *Entry
+	storage map[string]*Entry
+	head    *Entry
+	count   atomic.Int32
+
+	entryChan   chan *Entry
 	fzfDelegate FzfDelegate
 
 	mutex sync.Mutex
 	wg    sync.WaitGroup
 	state atomic.Int32
 }
-type FilteredState struct {
-	head         *Entry
-	iter         *Entry
-	count        int
-	sigRefreshed chan RefreshedMsg
+type State struct {
+	head   *Entry
+	iter   *Entry
+	count  int32
+	signal SigRefresh
 }
-type State int32
 
 const (
-	Loading   State = 0
-	Loaded    State = 1
-	Filtering State = 2
-	Filtered  State = 3
-	Stopped   State = 4
+	Stopped   int32 = 0
+	Filtering int32 = 1
+	Filtered  int32 = 2
 )
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -53,130 +52,135 @@ func NewEntries() Entries {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entries) LoadEntries(sigRefreshed chan RefreshedMsg) tea.Cmd {
+func (p *Entries) LoadEntries(signal SigRefresh) tea.Cmd {
 	return func() tea.Msg {
-		p.state.Store(int32(Loading))
-		defer p.state.Store(int32(Loaded))
+		p.entryChan = make(chan *Entry)
+		defer close(p.entryChan)
 
-		p.sigEntry = make(chan *Entry)
-		go p.appendEntry(sigRefreshed)
-		loadApplications(p.sigEntry)
-		loadFiles(p.sigEntry, true)
-		close(p.sigEntry)
-		return EntriesLoadedMsg{head: p.head, count: int(p.count.Load())}
+		go p.appendEntry(signal)
+		loadApplications(p.entryChan)
+		loadFiles(p.entryChan, true)
+
+		return LoadedMsg{}
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entries) appendEntry(sig chan RefreshedMsg) {
-	entry := <-p.sigEntry
+func (p *Entries) appendEntry(signal SigRefresh) {
+	entry := <-p.entryChan
+
 	p.mutex.Lock()
-	p.list = append(p.list, entry)
-	p.storage[entry.name] = entry
+	p.head = entry
+	p.storage[entry.name] = p.head
 	p.mutex.Unlock()
 
-	p.count.Store(int32(len(p.list)))
-	msg := RefreshedMsg{head: p.list[0], count: int(p.count.Load())}
-	send(sig, msg, p.state.Load() != int32(Filtering))
+	p.send(signal, RefreshingMsg{
+		head:  p.head,
+		count: p.count.Add(1),
+	})
 
-	for entry := range p.sigEntry {
+	iter := p.head
+	for entry := range p.entryChan {
 		p.mutex.Lock()
-		p.list[len(p.list)-1].next = entry
-		p.list = append(p.list, entry)
-		p.storage[entry.name] = entry
+		iter.next = entry
+		iter.fnext = entry
+		p.storage[iter.name] = iter
+		iter = iter.next
 		p.mutex.Unlock()
 
-		p.count.Store(int32(len(p.list)))
-		msg := RefreshedMsg{head: p.list[0], count: int(p.count.Load())}
-		send(sig, msg, p.state.Load() != int32(Filtering))
+		p.send(signal, RefreshingMsg{
+			head:  p.head,
+			count: p.count.Add(1),
+		})
 	}
 }
 
-func send(sig chan RefreshedMsg, msg RefreshedMsg, skip bool) {
-	if skip {
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *Entries) send(signal SigRefresh, msg RefreshingMsg) {
+	if p.state.Load() == Filtering {
 		return
 	}
 	select {
-	case sig <- msg:
+	case signal <- msg:
 	default:
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entries) FilterEntry(sigRefreshed chan RefreshedMsg, query string) tea.Cmd {
+func (p *Entries) StopFilter() bool {
+	return p.state.CompareAndSwap(Filtering, Stopped)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *Entries) FilterEntry(signal SigRefresh, query string) tea.Cmd {
 	return func() tea.Msg {
-		if p.state.CompareAndSwap(int32(Filtering), int32(Stopped)) {
+		if !p.state.CompareAndSwap(Filtered, Filtering) ||
+			!p.state.CompareAndSwap(Stopped, Filtering) {
 			p.wg.Wait()
-		} else if p.state.CompareAndSwap(int32(Filtering), int32(Filtered)) {
-			p.wg.Wait()
+			p.state.Store(Filtering)
 		}
 		p.wg.Add(1)
 		defer p.wg.Done()
-		p.state.Store(int32(Filtering))
-		defer p.state.Store(int32(Filtered))
 
-		state := FilteredState{count: 0, sigRefreshed: sigRefreshed}
-		filteredFn := func(name string) {
-			p.processFilteredEntry(&state, name)
+		s := State{count: 0, signal: signal}
+		filterFn := func(name string) {
+			p.processFilteredEntry(&s, name)
 		}
-		loopFn := func(input chan string) {
-			p.loopEntries(input, len(p.storage))
+		loopFn := func(stream FzfStream) {
+			p.loopEntries(stream, p.count.Load())
 		}
-		p.fzfDelegate.execute(query, filteredFn, loopFn)
+		p.fzfDelegate.execute(query, filterFn, loopFn)
 
-		if p.state.Load() != int32(Stopped) {
-			return FilterFinMsg{head: state.head, count: state.count}
+		if p.state.CompareAndSwap(Filtering, Filtered) {
+			return FilteredMsg{head: s.head, count: s.count}
 		}
-		return FilterStopMsg{}
+		return StoppedMsg{}
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entries) Stop() bool {
-	if p.state.CompareAndSwap(int32(Filtering), int32(Stopped)) {
-		return true
-	}
-	return false
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-func (p *Entries) loopEntries(input chan string, count int) {
-	for i := 0; i < count; i++ {
-		if p.state.Load() == int32(Stopped) {
+func (p *Entries) loopEntries(stream FzfStream, count int32) {
+	iter := p.head
+	for i := int32(0); i < count && iter != nil; i++ {
+		if p.state.Load() == Stopped {
 			break
 		}
-		input <- p.list[i].name
+		stream <- iter.name
+		iter = iter.next
 	}
-	close(input)
+	close(stream)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entries) processFilteredEntry(state *FilteredState, name string) {
+func (p *Entries) processFilteredEntry(state *State, name string) {
 	if state.head == nil {
 		p.mutex.Lock()
 		state.head = p.storage[name]
 		p.mutex.Unlock()
 
-		state.head.next = nil
+		state.head.fnext = nil
 		state.iter = state.head
 		state.count = 1
 	} else {
 		p.mutex.Lock()
-		state.iter.next = p.storage[name]
+		state.iter.fnext = p.storage[name]
 		p.mutex.Unlock()
 
-		state.iter = state.iter.next
-		state.iter.next = nil
+		state.iter = state.iter.fnext
+		if state.iter != nil {
+			state.iter.fnext = nil
+		}
 		state.count += 1
 	}
-	msg := RefreshedMsg{head: state.head, count: state.count}
+	msg := RefreshingMsg{head: state.head, count: state.count}
 	select {
-	case state.sigRefreshed <- msg:
+	case state.signal <- msg:
 	default:
 	}
 }

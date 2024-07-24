@@ -21,22 +21,22 @@ type EntryList []*desktop.Entry
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func loadCalculator(expr string, sigFzfIn chan string) {
+func loadCalculator(expr string, stream FzfStream) {
 	cal, err := calculator.Calculate(expr)
 	if err != nil {
 		return
 	}
 
 	if cal == math.Trunc(cal) {
-		sigFzfIn <- fmt.Sprintf(`%s = %d`, expr, int64(cal))
+		stream <- fmt.Sprintf(`%s = %d`, expr, int64(cal))
 	} else {
-		sigFzfIn <- fmt.Sprintf(`%s = %f`, expr, cal)
+		stream <- fmt.Sprintf(`%s = %f`, expr, cal)
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func loadApplications(sigEntry chan *Entry) {
+func loadApplications(entryChan chan *Entry) {
 	dirs, err := desktop.Scan(desktop.DataDirs())
 	if err != nil {
 		log.Println("Failed to scan applications")
@@ -48,13 +48,13 @@ func loadApplications(sigEntry chan *Entry) {
 			continue
 		}
 		l := EntryList(entries)
-		traverseEntryList(l, sigEntry)
+		traverseEntryList(l, entryChan)
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func loadFiles(sigEntry chan *Entry, hidden bool) bool {
+func loadFiles(entryChan chan *Entry, hidden bool) bool {
 	root, err := os.UserHomeDir()
 	if err != nil {
 		log.Println("Failed to locate home directory")
@@ -69,7 +69,7 @@ func loadFiles(sigEntry chan *Entry, hidden bool) bool {
 
 		relativePath := strings.Replace(path, root, "", 1)
 		if !d.IsDir() && (hidden || !isHiddenFile(relativePath)) {
-			sigEntry <- &Entry{name: path, action: nil}
+			entryChan <- &Entry{name: path, action: nil}
 		} else if d.IsDir() && !hidden && isHiddenDir(relativePath) {
 			return fastwalk.SkipDir
 		}
@@ -80,7 +80,10 @@ func loadFiles(sigEntry chan *Entry, hidden bool) bool {
 		Follow:  true,
 		ToSlash: fastwalk.DefaultToSlash(),
 	}
-	return fastwalk.Walk(&walkCfg, root, fn) == nil
+	return fastwalk.Walk(
+		&walkCfg,
+		root,
+		fastwalk.IgnorePermissionErrors(fn)) == nil
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -107,12 +110,12 @@ func isHiddenDir(path string) bool {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func traverseEntryList(entries EntryList, sigEntry chan *Entry) {
+func traverseEntryList(entries EntryList, entryChan chan *Entry) {
 	for _, entry := range entries {
-		isApp := strings.Compare(entry.Type.String(), "Application") == 0
+		isApp := entry.Type.String() == "Application"
 		if !isApp || entry.Terminal {
 			continue
 		}
-		sigEntry <- &Entry{name: entry.Name, action: nil}
+		entryChan <- &Entry{name: entry.Name, action: nil}
 	}
 }

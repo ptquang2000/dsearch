@@ -8,25 +8,26 @@ import (
 
 ///////////////////////////////////////////////////////////////////////////////
 
+type FzfStream chan string
 type FzfDelegate struct {
-	query  chan string
-	input  chan string
-	output chan string
+	input  FzfStream
+	output FzfStream
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 func NewFzfDelegate() FzfDelegate {
-	return FzfDelegate{
-		query: make(chan string),
-	}
+	return FzfDelegate{}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *FzfDelegate) execute(query string, foundCb func(string), entryLoop func(chan string)) {
-	p.input = make(chan string)
-	p.output = make(chan string)
+func (p *FzfDelegate) execute(
+	query string,
+	foundCb func(string),
+	entryLoop func(FzfStream)) {
+	p.input = make(FzfStream)
+	p.output = make(FzfStream)
 	go func() {
 		for name := range p.output {
 			foundCb(name)
@@ -40,7 +41,7 @@ func (p *FzfDelegate) execute(query string, foundCb func(string), entryLoop func
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func filter(query string, input chan string, output chan string) int {
+func filter(query string, input FzfStream, output FzfStream) int {
 	args := []string{
 		"--filter",
 		fmt.Sprintf(`%s`, query),
