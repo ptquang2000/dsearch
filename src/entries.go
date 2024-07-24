@@ -1,7 +1,6 @@
 package dsearch
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
 
@@ -62,7 +61,6 @@ func (p *Entries) LoadEntries(sigRefreshed chan RefreshedMsg) tea.Cmd {
 		loadApplications(p.sigEntry)
 		loadFiles(p.sigEntry, true)
 		close(p.sigEntry)
-		log.Println("LoadEntries finished")
 		return EntriesLoadedMsg{head: p.head, count: int(p.count.Load())}
 	}
 }
@@ -111,7 +109,11 @@ func (p *Entries) FilterEntry(sigRefreshed chan RefreshedMsg, query string) tea.
 			p.loopEntries(input, len(p.storage))
 		}
 		p.fzfDelegate.execute(query, filteredFn, loopFn)
-		return FilteredMsg{head: state.head, count: state.count}
+
+		if p.state.Load() != int32(Stopped) {
+			return FilterFinMsg{head: state.head, count: state.count}
+		}
+		return FilterStopMsg{}
 	}
 }
 

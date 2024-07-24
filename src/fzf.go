@@ -2,7 +2,6 @@ package dsearch
 
 import (
 	"fmt"
-	"log"
 
 	fzf "github.com/junegunn/fzf/src"
 )
@@ -26,7 +25,6 @@ func NewFzfDelegate() FzfDelegate {
 ///////////////////////////////////////////////////////////////////////////////
 
 func (p *FzfDelegate) execute(query string, foundCb func(string), entryLoop func(chan string)) {
-	log.Printf(`Received new query: "%s"`, query)
 	p.input = make(chan string)
 	p.output = make(chan string)
 	go func() {
@@ -38,7 +36,6 @@ func (p *FzfDelegate) execute(query string, foundCb func(string), entryLoop func
 		entryLoop(p.input)
 	}()
 	filter(query, p.input, p.output)
-	log.Println("Finished filtering entries")
 }
 
 ///////////////////////////////////////////////////////////////////////////////

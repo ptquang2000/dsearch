@@ -34,7 +34,11 @@ type EntriesLoadedMsg struct {
 	head  *Entry
 	count int
 }
-type FilteredMsg struct {
+type FilterFinMsg struct {
+	head  *Entry
+	count int
+}
+type FilterStopMsg struct {
 	head  *Entry
 	count int
 }
@@ -102,12 +106,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.count = msg.count
 		return m, onRefreshView(m.sigRefreshed)
 	case EntriesLoadedMsg:
-		log.Printf("Finished to load all entries")
+		log.Printf("Finished loading all entries")
 		m.head = msg.head
 		m.count = msg.count
 		return m, onRefreshView(m.sigRefreshed)
 	case NewQueryMsg:
+		log.Println("Received new query: ", msg.query)
 		return m, m.entries.FilterEntry(m.sigRefreshed, msg.query)
+	case FilterFinMsg:
+		log.Println("Finished filtering entries")
+		m.head = msg.head
+		m.count = msg.count
+		return m, onRefreshView(m.sigRefreshed)
+	case FilterStopMsg:
+		log.Println("Filter execution was stopped")
+		return m, nil
 	default:
 		log.Println("Update")
 	}
@@ -187,28 +200,22 @@ func (m *model) View() string {
 
 	sb := new(strings.Builder)
 
-	sb.WriteString(fmt.Sprintf("\n\n%s\n\n", m.textInput.View()))
+	sb.WriteString(fmt.Sprintf("\n%s\n\n", m.textInput.View()))
 
 	limit := m.height - 6
 	start := max(0, m.cursor+1-limit)
 	end := max(limit, m.cursor+1)
-	iter := m.head
-	for i := 0; i < start; i++ {
-		if iter == nil {
-			break
-		}
-		iter = iter.next
-	}
+	head := m.head
 	for i := start; i < m.count && i < end; i++ {
-		if iter == nil {
+		if head == nil {
 			break
 		}
 		cursor := " "
 		if m.cursor == i {
 			cursor = ">"
 		}
-		sb.WriteString(fmt.Sprintf("%s %s\n", cursor, iter.name))
-		iter = iter.next
+		sb.WriteString(fmt.Sprintf("%s %s\n", cursor, head.name))
+		head = head.next
 	}
 
 	sb.WriteString("\nPress Esc to quit.\n")
