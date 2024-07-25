@@ -92,7 +92,7 @@ func parseDesktopFile(path string, entryChan chan *Entry) {
 
 func buildAppEntry(path string, entry *desktop.Entry) *Entry {
 	cmd := exec.Command("gio", "launch", path)
-	action := func() { cmd.Run() }
+	action := func() { cmd.Start() }
 	return &Entry{name: entry.Name, action: action}
 }
 
@@ -113,7 +113,7 @@ func loadFiles(entryChan chan *Entry, hidden bool) bool {
 
 		relativePath := strings.Replace(path, root, "", 1)
 		if !d.IsDir() && (hidden || !isHiddenFile(relativePath)) {
-			entryChan <- &Entry{name: path, action: nil}
+			entryChan <- buildFileEntry(path)
 		} else if d.IsDir() && !hidden && isHiddenDir(relativePath) {
 			return fastwalk.SkipDir
 		}
@@ -128,6 +128,14 @@ func loadFiles(entryChan chan *Entry, hidden bool) bool {
 		&walkCfg,
 		root,
 		fastwalk.IgnorePermissionErrors(fn)) == nil
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func buildFileEntry(path string) *Entry {
+	cmd := exec.Command("xdg-open", path)
+	action := func() { cmd.Start() }
+	return &Entry{name: path, action: action}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
