@@ -1,14 +1,17 @@
 package dsearch
 
 import (
-	"code.rocketnine.space/tslocum/desktop"
+	"bufio"
 	"fmt"
 	"io/fs"
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"code.rocketnine.space/tslocum/desktop"
 
 	"github.com/mnogu/go-calculator"
 
@@ -37,19 +40,60 @@ func loadCalculator(expr string, stream FzfStream) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func loadApplications(entryChan chan *Entry) {
-	dirs, err := desktop.Scan(desktop.DataDirs())
-	if err != nil {
-		log.Println("Failed to scan applications")
-		return
+	for _, dir := range desktop.DataDirs() {
+		walkDataDir(dir, entryChan)
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func walkDataDir(root string, entryChan chan *Entry) {
+	fn := func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			log.Printf("Error during walking %s: %v\n", path, err)
+			return nil // returning the error stops iteration
+		}
+
+		if !d.IsDir() {
+			parseDesktopFile(path, entryChan)
+		}
+		return err
 	}
 
-	for _, entries := range dirs {
-		if len(entries) == 0 {
-			continue
-		}
-		l := EntryList(entries)
-		traverseEntryList(l, entryChan)
+	fastwalk.Walk(
+		&fastwalk.Config{
+			Follow:  true,
+			ToSlash: fastwalk.DefaultToSlash(),
+		},
+		root,
+		fastwalk.IgnorePermissionErrors(fn))
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func parseDesktopFile(path string, entryChan chan *Entry) {
+	f, err := os.Open(path)
+	if err != nil {
+		log.Println("Failed to open file", path)
 	}
+	buf := make([]byte, 0, 64*1024)
+	reader := bufio.NewReader(f)
+	entry, err := desktop.Parse(reader, buf)
+	if err != nil || entry == nil {
+		log.Printf("Failed to parse file %s, err %v", path, err)
+		return
+	}
+	if entry.Type == desktop.Application {
+		entryChan <- buildAppEntry(path, entry)
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func buildAppEntry(path string, entry *desktop.Entry) *Entry {
+	cmd := exec.Command("gio", "launch", path)
+	action := func() { cmd.Run() }
+	return &Entry{name: entry.Name, action: action}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -77,7 +121,7 @@ func loadFiles(entryChan chan *Entry, hidden bool) bool {
 	}
 
 	walkCfg := fastwalk.Config{
-		Follow:  true,
+		Follow:  false,
 		ToSlash: fastwalk.DefaultToSlash(),
 	}
 	return fastwalk.Walk(
@@ -109,13 +153,3 @@ func isHiddenDir(path string) bool {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-
-func traverseEntryList(entries EntryList, entryChan chan *Entry) {
-	for _, entry := range entries {
-		isApp := entry.Type.String() == "Application"
-		if !isApp || entry.Terminal {
-			continue
-		}
-		entryChan <- &Entry{name: entry.Name, action: nil}
-	}
-}

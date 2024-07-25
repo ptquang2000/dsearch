@@ -40,6 +40,9 @@ type StoppedMsg struct{}
 type QueryMsg struct {
 	query string
 }
+type SelectedMsg struct {
+	entry *Entry
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -113,6 +116,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, onViewRefreshed(m.sigRefresh)
 	case StoppedMsg:
 		log.Println("Filter execution was stopped")
+	case SelectedMsg:
+		log.Println("Select entry ", msg.entry.name)
+		if !m.entries.SelectEntry(msg.entry) {
+			log.Println("Failed to execute entry ", msg.entry.name)
+		}
+		return m, tea.Quit
 	default:
 		log.Println("Update")
 	}
@@ -173,14 +182,17 @@ func (m *model) onKeyChanged(key tea.KeyType) tea.Cmd {
 			m.cursor++
 		}
 	case tea.KeyEnter:
-		//_, ok := m.selected[m.cursor]
-		//if ok {
-		//	delete(m.selected, m.cursor)
-		//} else {
-		//	m.selected[m.cursor] = struct{}{}
-		//}
+		head := m.head
+		for i := int32(0); i < m.cursor && head != nil; i++ {
+			head = head.fnext
+		}
+		return onSelectedEntry(head)
 	}
 	return nil
+}
+
+func onSelectedEntry(entry *Entry) tea.Cmd {
+	return func() tea.Msg { return SelectedMsg{entry: entry} }
 }
 
 ///////////////////////////////////////////////////////////////////////////////

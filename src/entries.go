@@ -186,3 +186,13 @@ func (p *Entries) processFilteredEntry(state *State, name string) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+
+func (p *Entries) SelectEntry(entry *Entry) bool {
+	if entry.action != nil {
+		entry.action()
+		return true
+	}
+	return false
+}
+
+///////////////////////////////////////////////////////////////////////////////
