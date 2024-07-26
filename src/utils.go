@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"code.rocketnine.space/tslocum/desktop"
 
@@ -91,8 +92,17 @@ func parseDesktopFile(path string, entryChan chan *Entry) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func buildAppEntry(path string, entry *desktop.Entry) *Entry {
-	cmd := exec.Command("gio", "launch", path)
-	action := func() { cmd.Start() }
+	action := func() {
+		cmd := exec.Command("gio", "launch", path)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Foreground: false,
+			Setsid:     true,
+		}
+		if err := cmd.Start(); err != nil {
+			log.Fatalf("Failed to exec %s, err:%v", cmd.String(), err)
+		}
+		cmd.Process.Release()
+	}
 	return &Entry{name: entry.Name, action: action}
 }
 
@@ -133,8 +143,17 @@ func loadFiles(entryChan chan *Entry, hidden bool) bool {
 ///////////////////////////////////////////////////////////////////////////////
 
 func buildFileEntry(path string) *Entry {
-	cmd := exec.Command("xdg-open", path)
-	action := func() { cmd.Start() }
+	action := func() {
+		cmd := exec.Command("xdg-open", path)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Foreground: false,
+			Setsid:     true,
+		}
+		if err := cmd.Start(); err != nil {
+			log.Fatalf("Failed to exec %s, err:%v", cmd.String(), err)
+		}
+		cmd.Process.Release()
+	}
 	return &Entry{name: path, action: action}
 }
 

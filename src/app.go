@@ -1,6 +1,7 @@
 package dsearch
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -46,9 +47,18 @@ type SelectedMsg struct {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+func isDebug() bool {
+	debugFlag := flag.Bool("DEBUG", false, "Debug Mode")
+	flag.Parse()
+	return *debugFlag || len(os.Getenv("DEBUG")) > 0
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 func Run() {
-	if len(os.Getenv("DEBUG")) > 0 {
-		f, err := tea.LogToFile("dsearch.log", "dsearch")
+	if homeDir, err := os.UserHomeDir(); isDebug() && err == nil {
+		dir := fmt.Sprintf(`%s/.dsearch.log`, homeDir)
+		f, err := tea.LogToFile(dir, "dsearch")
 		if err != nil {
 			log.Println("fatal:", err)
 			os.Exit(1)
