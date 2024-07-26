@@ -1,6 +1,9 @@
 package dsearch
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"log"
 	"sync"
 	"sync/atomic"
 
@@ -16,8 +19,9 @@ type Entry struct {
 	next  *Entry // next entry
 	fnext *Entry // next filtered entry
 }
+type EntryHashMapTable map[uint64][]*Entry
 type Entries struct {
-	storage map[string]*Entry
+	storage EntryHashMapTable
 	head    *Entry
 	count   atomic.Int32
 
@@ -28,7 +32,7 @@ type Entries struct {
 	wg    sync.WaitGroup
 	state atomic.Int32
 }
-type State struct {
+type EntryLinkedList struct {
 	head   *Entry
 	iter   *Entry
 	count  int32
@@ -45,7 +49,7 @@ const (
 
 func NewEntries() Entries {
 	return Entries{
-		storage:     make(map[string]*Entry),
+		storage:     make(EntryHashMapTable),
 		fzfDelegate: NewFzfDelegate(),
 	}
 }
@@ -67,28 +71,47 @@ func (p *Entries) LoadEntries(signal SigRefresh) tea.Cmd {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+func hasher() func(string) uint64 {
+	h := sha256.New()
+	return func(s string) uint64 {
+		h.Reset()
+		h.Write([]byte(s))
+		bs := h.Sum(nil)
+		return binary.LittleEndian.Uint64(bs)
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 func (p *Entries) appendEntry(signal SigRefresh) {
 	entry := <-p.entryChan
 
-	p.mutex.Lock()
-	p.head = entry
-	p.storage[entry.name] = p.head
-	p.mutex.Unlock()
+	hash := hasher()
+	emplace := func(e *Entry) *Entry {
+		p.mutex.Lock()
+		defer p.mutex.Unlock()
 
+		key := hash(e.name)
+		if table, ok := p.storage[key]; ok {
+			table = append(table, e)
+			return table[len(table)-1]
+		}
+		p.storage[key] = make([]*Entry, 0, 1)
+		p.storage[key] = append(p.storage[key], e)
+		return e
+	}
+
+	p.head = emplace(entry)
+	iter := p.head
 	p.send(signal, RefreshingMsg{
 		head:  p.head,
 		count: p.count.Add(1),
 	})
 
-	iter := p.head
 	for entry := range p.entryChan {
-		p.mutex.Lock()
-		iter.next = entry
-		iter.fnext = entry
-		p.storage[iter.name] = iter
+		iter.next = emplace(entry)
+		iter.fnext = iter.next
 		iter = iter.next
-		p.mutex.Unlock()
-
 		p.send(signal, RefreshingMsg{
 			head:  p.head,
 			count: p.count.Add(1),
@@ -126,17 +149,18 @@ func (p *Entries) FilterEntry(signal SigRefresh, query string) tea.Cmd {
 		p.wg.Add(1)
 		defer p.wg.Done()
 
-		s := State{count: 0, signal: signal}
+		l := EntryLinkedList{count: 0, signal: signal}
+		hash := hasher()
 		filterFn := func(name string) {
-			p.processFilteredEntry(&s, name)
+			p.processFilteredEntry(&l, hash(name))
 		}
 		loopFn := func(stream FzfStream) {
-			p.loopEntries(stream, p.count.Load())
+			p.loopEntries(stream)
 		}
 		p.fzfDelegate.execute(query, filterFn, loopFn)
 
 		if p.state.CompareAndSwap(Filtering, Filtered) {
-			return FilteredMsg{head: s.head, count: s.count}
+			return FilteredMsg{head: l.head, count: l.count}
 		}
 		return StoppedMsg{}
 	}
@@ -144,43 +168,48 @@ func (p *Entries) FilterEntry(signal SigRefresh, query string) tea.Cmd {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entries) loopEntries(stream FzfStream, count int32) {
+func (p *Entries) loopEntries(stream FzfStream) {
 	iter := p.head
-	for i := int32(0); i < count && iter != nil; i++ {
-		if p.state.Load() == Stopped {
-			break
-		}
+	i := int32(0)
+	for i < p.count.Load() && p.state.Load() != Stopped && iter != nil {
 		stream <- iter.name
 		iter = iter.next
+		i++
 	}
 	close(stream)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entries) processFilteredEntry(state *State, name string) {
-	if state.head == nil {
+func (p *Entries) processFilteredEntry(l *EntryLinkedList, key uint64) {
+	get := func(key uint64) (*Entry, *Entry, int32) {
 		p.mutex.Lock()
-		state.head = p.storage[name]
-		p.mutex.Unlock()
+		defer p.mutex.Unlock()
 
-		state.head.fnext = nil
-		state.iter = state.head
-		state.count = 1
-	} else {
-		p.mutex.Lock()
-		state.iter.fnext = p.storage[name]
-		p.mutex.Unlock()
-
-		state.iter = state.iter.fnext
-		if state.iter != nil {
-			state.iter.fnext = nil
+		table, ok := p.storage[key]
+		if !ok {
+			log.Fatalf("Key %d not found in storage", key)
 		}
-		state.count += 1
+		iter := table[0]
+		for i := 1; i < len(table); i++ {
+			iter.fnext = table[i]
+			iter = iter.fnext
+		}
+		return table[0], table[len(table)-1], int32(len(table))
 	}
-	msg := RefreshingMsg{head: state.head, count: state.count}
+	if l.head == nil {
+		l.head, l.iter, l.count = get(key)
+	} else {
+		var count int32
+		l.iter.fnext, l.iter, count = get(key)
+		l.count += count
+		if l.iter != nil {
+			l.iter.fnext = nil
+		}
+	}
+	msg := RefreshingMsg{head: l.head, count: l.count}
 	select {
-	case state.signal <- msg:
+	case l.signal <- msg:
 	default:
 	}
 }

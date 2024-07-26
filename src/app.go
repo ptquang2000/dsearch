@@ -102,6 +102,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RefreshingMsg:
 		m.head = msg.head
 		m.count = msg.count
+		m.cursor = max(min(m.cursor, m.count-1), 0)
 		return m, onViewRefreshed(m.sigRefresh)
 	case LoadedMsg:
 		log.Println("Finished to load all entries")
@@ -113,6 +114,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Println("Finished to filter query")
 		m.head = msg.head
 		m.count = msg.count
+		m.cursor = max(min(m.cursor, m.count-1), 0)
 		return m, onViewRefreshed(m.sigRefresh)
 	case StoppedMsg:
 		log.Println("Filter execution was stopped")
@@ -174,13 +176,11 @@ func (m *model) onKeyChanged(key tea.KeyType) tea.Cmd {
 	case tea.KeyCtrlC, tea.KeyEsc:
 		return tea.Quit
 	case tea.KeyUp:
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.cursor--
+		m.cursor = max(m.cursor, 0)
 	case tea.KeyDown:
-		if m.cursor < m.count-1 {
-			m.cursor++
-		}
+		m.cursor++
+		m.cursor = min(m.cursor, m.count-1)
 	case tea.KeyEnter:
 		head := m.head
 		for i := int32(0); i < m.cursor && head != nil; i++ {
@@ -210,17 +210,17 @@ func (m *model) View() string {
 	start := max(int32(0), m.cursor+1-limit)
 	end := max(limit, m.cursor+1)
 
-	head := m.head
-	for i := int32(0); i < start && head != nil; i++ {
-		head = head.fnext
+	iter := m.head
+	for i := int32(0); i < m.count && i < start && iter != nil; i++ {
+		iter = iter.fnext
 	}
-	for i := start; i < m.count && i < end && head != nil; i++ {
+	for i := start; i < m.count && i < end && iter != nil; i++ {
 		cursor := " "
 		if m.cursor == i {
 			cursor = ">"
 		}
-		sb.WriteString(fmt.Sprintf("%s %s\n", cursor, head.name))
-		head = head.fnext
+		sb.WriteString(fmt.Sprintf("%s %s\n", cursor, iter.name))
+		iter = iter.fnext
 	}
 
 	sb.WriteString("\nPress Esc to quit.\n")

@@ -79,11 +79,11 @@ func parseDesktopFile(path string, entryChan chan *Entry) {
 	buf := make([]byte, 0, 64*1024)
 	reader := bufio.NewReader(f)
 	entry, err := desktop.Parse(reader, buf)
-	if err != nil || entry == nil {
+	if err != nil {
 		log.Printf("Failed to parse file %s, err %v", path, err)
 		return
 	}
-	if entry.Type == desktop.Application {
+	if entry != nil && entry.Type == desktop.Application {
 		entryChan <- buildAppEntry(path, entry)
 	}
 }
