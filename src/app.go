@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -60,7 +61,7 @@ func Run() {
 		dir := fmt.Sprintf(`%s/.dsearch.log`, homeDir)
 		f, err := tea.LogToFile(dir, "dsearch")
 		if err != nil {
-			log.Println("fatal:", err)
+			log.Printf(`Failed to log to file, err: %v`, err)
 			os.Exit(1)
 		}
 		defer f.Close()
@@ -74,7 +75,7 @@ func Run() {
 		cursor:     0,
 	})
 	if _, err := p.Run(); err != nil {
-		log.Printf("Alas, there's been an error: %v", err)
+		log.Printf(`Alas, there's been an error: %v`, err)
 		os.Exit(1)
 	}
 }
@@ -118,7 +119,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Println("Finished to load all entries")
 		return m, onViewRefreshed(m.sigRefresh)
 	case QueryMsg:
-		log.Println("Received new query: ", msg.query)
+		log.Printf(`Received new query: %s`, msg.query)
 		return m, m.entries.FilterEntry(m.sigRefresh, msg.query)
 	case FilteredMsg:
 		log.Println("Finished to filter query")
@@ -129,13 +130,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StoppedMsg:
 		log.Println("Filter execution was stopped")
 	case SelectedMsg:
-		log.Println("Select entry ", msg.entry.name)
+		log.Printf(`Select entry %s`, msg.entry.name)
 		if !m.entries.SelectEntry(msg.entry) {
-			log.Println("Failed to execute entry ", msg.entry.name)
+			log.Printf(`Failed to execute entry %s`, msg.entry.name)
 		}
 		return m, tea.Quit
 	default:
-		log.Println("Update")
+		log.Printf(`Uknown update |%s|`, msg)
 	}
 	return m, nil
 }
@@ -156,7 +157,11 @@ func (m *model) onWindowReady() {
 	ti.Focus()
 	ti.CharLimit = 256
 	ti.Width = m.width
-	ti.Prompt = "   "
+	ti.Prompt = " "
+	ti.KeyMap.WordForward = key.NewBinding(key.WithKeys("ctrl+right"))
+	ti.KeyMap.DeleteWordForward = key.NewBinding(key.WithKeys("\x1b[3;5~"))
+	ti.KeyMap.WordBackward = key.NewBinding(key.WithKeys("ctrl+left"))
+	ti.KeyMap.DeleteWordBackward = key.NewBinding(key.WithKeys("ctrl+h"))
 	m.textInput = ti
 }
 
@@ -185,10 +190,10 @@ func (m *model) onKeyChanged(key tea.KeyType) tea.Cmd {
 	switch key {
 	case tea.KeyCtrlC, tea.KeyEsc:
 		return tea.Quit
-	case tea.KeyUp:
+	case tea.KeyUp, tea.KeyCtrlP:
 		m.cursor--
 		m.cursor = max(m.cursor, 0)
-	case tea.KeyDown:
+	case tea.KeyDown, tea.KeyCtrlN:
 		m.cursor++
 		m.cursor = min(m.cursor, m.count-1)
 	case tea.KeyEnter:
@@ -197,6 +202,8 @@ func (m *model) onKeyChanged(key tea.KeyType) tea.Cmd {
 			head = head.fnext
 		}
 		return onSelectedEntry(head)
+	default:
+		log.Printf(`Received keys: |%s|`, key)
 	}
 	return nil
 }
@@ -214,7 +221,7 @@ func (m *model) View() string {
 
 	sb := new(strings.Builder)
 
-	sb.WriteString(fmt.Sprintf("\n%s\n\n", m.textInput.View()))
+	sb.WriteString(fmt.Sprintf("\n %s\n", m.textInput.View()))
 
 	limit := int32(m.height) - 6
 	start := max(int32(0), m.cursor+1-limit)
@@ -229,11 +236,11 @@ func (m *model) View() string {
 		if m.cursor == i {
 			cursor = ">"
 		}
-		sb.WriteString(fmt.Sprintf("%s %s\n", cursor, iter.name))
+		sb.WriteString(fmt.Sprintf("\n %s %s", cursor, iter.name))
 		iter = iter.fnext
 	}
 
-	sb.WriteString("\nPress Esc to quit.\n")
+	sb.WriteString("\n\n Press Esc to quit.\n")
 
 	return sb.String()
 }

@@ -51,7 +51,7 @@ func loadApplications(entryChan chan *Entry) {
 func walkDataDir(root string, entryChan chan *Entry) {
 	fn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			log.Printf("Error during walking %s: %v\n", path, err)
+			log.Printf(`Error during walking %s: %v\n`, path, err)
 			return nil // returning the error stops iteration
 		}
 
@@ -75,13 +75,13 @@ func walkDataDir(root string, entryChan chan *Entry) {
 func parseDesktopFile(path string, entryChan chan *Entry) {
 	f, err := os.Open(path)
 	if err != nil {
-		log.Println("Failed to open file", path)
+		log.Printf(`Failed to open file %s, err:%v`, path, err)
 	}
 	buf := make([]byte, 0, 64*1024)
 	reader := bufio.NewReader(f)
 	entry, err := desktop.Parse(reader, buf)
 	if err != nil {
-		log.Printf("Failed to parse file %s, err %v", path, err)
+		log.Printf(`Failed to parse file %s, err %v`, path, err)
 		return
 	}
 	if entry != nil && entry.Type == desktop.Application {
@@ -117,7 +117,7 @@ func loadFiles(entryChan chan *Entry, hidden bool) bool {
 
 	fn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			log.Printf("Error during walking %s: %v\n", path, err)
+			log.Printf(`Error during walking %s: %v\n`, path, err)
 			return nil // returning the error stops iteration
 		}
 
