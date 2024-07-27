@@ -25,17 +25,19 @@ type EntryList []*desktop.Entry
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func loadCalculator(expr string, stream FzfStream) {
+func loadCalculator(expr string) *Entry {
 	cal, err := calculator.Calculate(expr)
 	if err != nil {
-		return
+		return nil
 	}
 
+	entry := Entry{execute: func() {}}
 	if cal == math.Trunc(cal) {
-		stream <- fmt.Sprintf(`%s = %d`, expr, int64(cal))
+		entry.name = fmt.Sprintf(`%s = %d`, expr, int64(cal))
 	} else {
-		stream <- fmt.Sprintf(`%s = %f`, expr, cal)
+		entry.name = fmt.Sprintf(`%s = %f`, expr, cal)
 	}
+	return &entry
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -103,7 +105,7 @@ func buildAppEntry(path string, entry *desktop.Entry) *Entry {
 		}
 		cmd.Process.Release()
 	}
-	return &Entry{name: entry.Name, action: action}
+	return &Entry{name: entry.Name, execute: action}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -154,7 +156,7 @@ func buildFileEntry(path string) *Entry {
 		}
 		cmd.Process.Release()
 	}
-	return &Entry{name: path, action: action}
+	return &Entry{name: path, execute: action}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

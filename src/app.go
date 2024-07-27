@@ -21,29 +21,22 @@ type model struct {
 	height int
 	width  int
 
-	entries   Entries
+	manager   IEntryManager
 	textInput textinput.Model
 
 	sigRefresh SigRefresh
-	head       *Entry
-	count      int32
-	cursor     int32
+	entries    IEntryLinkedList
+	cursor     int
 }
-type RefreshingMsg struct {
-	head  *Entry
-	count int32
-}
+type RefreshingMsg struct{ list IEntryLinkedList }
 type LoadedMsg struct{}
-type FilteredMsg struct {
-	head  *Entry
-	count int32
-}
+type FilteredMsg struct{ list IEntryLinkedList }
 type StoppedMsg struct{}
 type QueryMsg struct {
 	query string
 }
 type SelectedMsg struct {
-	entry *Entry
+	entry *EntryNode
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -70,7 +63,7 @@ func Run() {
 	}
 
 	p := tea.NewProgram(&model{
-		entries:    NewEntries(),
+		manager:    NewEntryManager(),
 		sigRefresh: make(SigRefresh),
 		cursor:     0,
 	})
@@ -88,7 +81,7 @@ func (m *model) Init() tea.Cmd {
 		tea.SetWindowTitle("DSearch"),
 		textinput.Blink,
 		onViewRefreshed(m.sigRefresh),
-		m.entries.LoadEntries(m.sigRefresh),
+		m.manager.LoadEntries(m.sigRefresh),
 	)
 }
 
@@ -111,29 +104,26 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ready = true
 		}
 	case RefreshingMsg:
-		m.head = msg.head
-		m.count = msg.count
-		m.cursor = max(min(m.cursor, m.count-1), 0)
+		m.entries = msg.list
+		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
 		return m, onViewRefreshed(m.sigRefresh)
 	case LoadedMsg:
 		log.Println("Finished to load all entries")
 		return m, onViewRefreshed(m.sigRefresh)
 	case QueryMsg:
 		log.Printf(`Received new query: %s`, msg.query)
-		return m, m.entries.FilterEntry(m.sigRefresh, msg.query)
+		return m, m.manager.FilterEntry(m.sigRefresh, msg.query)
 	case FilteredMsg:
 		log.Println("Finished to filter query")
-		m.head = msg.head
-		m.count = msg.count
-		m.cursor = max(min(m.cursor, m.count-1), 0)
+		m.entries = msg.list
+		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
 		return m, onViewRefreshed(m.sigRefresh)
 	case StoppedMsg:
 		log.Println("Filter execution was stopped")
 	case SelectedMsg:
-		log.Printf(`Select entry %s`, msg.entry.name)
-		if !m.entries.SelectEntry(msg.entry) {
-			log.Printf(`Failed to execute entry %s`, msg.entry.name)
-		}
+		name := msg.entry.value()
+		log.Printf(`Select entry %s`, name)
+		msg.entry.execute()
 		return m, tea.Quit
 	default:
 		log.Printf(`Uknown update |%s|`, msg)
@@ -179,7 +169,7 @@ func (m *model) onTextInputChanged(msg tea.Msg) tea.Cmd {
 
 func (m *model) onFilterRequested(query string) tea.Cmd {
 	return func() tea.Msg {
-		m.entries.StopFilter()
+		m.manager.StopFilter()
 		return QueryMsg{query: query}
 	}
 }
@@ -195,11 +185,11 @@ func (m *model) onKeyChanged(key tea.KeyType) tea.Cmd {
 		m.cursor = max(m.cursor, 0)
 	case tea.KeyDown, tea.KeyCtrlN:
 		m.cursor++
-		m.cursor = min(m.cursor, m.count-1)
+		m.cursor = min(m.cursor, m.entries.len()-1)
 	case tea.KeyEnter:
-		head := m.head
-		for i := int32(0); i < m.cursor && head != nil; i++ {
-			head = head.fnext
+		head := m.entries.begin()
+		for i := 0; i < m.cursor && head != nil; i++ {
+			head = head.next
 		}
 		return onSelectedEntry(head)
 	default:
@@ -208,14 +198,14 @@ func (m *model) onKeyChanged(key tea.KeyType) tea.Cmd {
 	return nil
 }
 
-func onSelectedEntry(entry *Entry) tea.Cmd {
+func onSelectedEntry(entry *EntryNode) tea.Cmd {
 	return func() tea.Msg { return SelectedMsg{entry: entry} }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 func (m *model) View() string {
-	if !m.ready {
+	if !m.ready || m.entries == nil {
 		return "\n Inializing ..."
 	}
 
@@ -223,21 +213,22 @@ func (m *model) View() string {
 
 	sb.WriteString(fmt.Sprintf("\n %s\n", m.textInput.View()))
 
-	limit := int32(m.height) - 6
-	start := max(int32(0), m.cursor+1-limit)
+	limit := m.height - 6
+	start := max(0, m.cursor+1-limit)
 	end := max(limit, m.cursor+1)
 
-	iter := m.head
-	for i := int32(0); i < m.count && i < start && iter != nil; i++ {
-		iter = iter.fnext
+	count := m.entries.len()
+	iter := m.entries.begin()
+	for i := 0; i < count && i < start && iter != nil; i++ {
+		iter = iter.next
 	}
-	for i := start; i < m.count && i < end && iter != nil; i++ {
+	for i := start; i < count && i < end && iter != nil; i++ {
 		cursor := " "
 		if m.cursor == i {
 			cursor = ">"
 		}
-		sb.WriteString(fmt.Sprintf("\n %s %s", cursor, iter.name))
-		iter = iter.fnext
+		sb.WriteString(fmt.Sprintf("\n %s %s", cursor, iter.value()))
+		iter = iter.next
 	}
 
 	sb.WriteString("\n\n Press Esc to quit.\n")
