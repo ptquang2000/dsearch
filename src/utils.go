@@ -25,17 +25,19 @@ type EntryList []*desktop.Entry
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func loadCalculator(expr string, stream FzfStream) {
+func loadCalculator(expr string) *Entry {
 	cal, err := calculator.Calculate(expr)
 	if err != nil {
-		return
+		return nil
 	}
 
+	entry := Entry{action: nil}
 	if cal == math.Trunc(cal) {
-		stream <- fmt.Sprintf(`%s = %d`, expr, int64(cal))
+		entry.name = fmt.Sprintf(`%s = %d`, expr, int64(cal))
 	} else {
-		stream <- fmt.Sprintf(`%s = %f`, expr, cal)
+		entry.name = fmt.Sprintf(`%s = %f`, expr, cal)
 	}
+	return &entry
 }
 
 ///////////////////////////////////////////////////////////////////////////////
