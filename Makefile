@@ -8,7 +8,8 @@ BUILD_DIR := ./build
 
 GO_SRCS := $(shell find ./src -iname '*.go')
 GO_BUILD := go build
-GO_BUILD_FLAGS := -tags gtk_3_20
+GO_BUILD_FLAGS :=
+GO_CLEAN := go clean -testcache
 
 module_path = $(subst build, $(MODULE_PREFIX), $(1))
 submodule_path = $(subst build, $(MODULE_PREFIX)/$(EXEC_TARGET), $(1))
@@ -45,4 +46,6 @@ Test%:
 
 .PHONY: clean
 clean:
+	$(GO_CLEAN)
 	rm -rf $(BUILD_DIR)
+	

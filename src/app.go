@@ -123,9 +123,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SelectedMsg:
 		name := msg.entry.value()
 		log.Printf(`Select entry %s`, name)
-		if !m.manager.SelectEntry(msg.entry) {
-			log.Printf(`Failed to execute entry %s`, name)
-		}
+		msg.entry.execute()
 		return m, tea.Quit
 	default:
 		log.Printf(`Uknown update |%s|`, msg)

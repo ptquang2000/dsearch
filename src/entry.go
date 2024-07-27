@@ -10,16 +10,16 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 
 type Entry struct {
-	name   string
-	action func()
+	name    string
+	execute func()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 type EntryNode struct {
-	value  func() string
-	action func()
-	next   *EntryNode
+	value   func() string
+	execute func()
+	next    *EntryNode
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -27,6 +27,7 @@ type EntryNode struct {
 type IEntryLinkedList interface {
 	len() int
 	begin() *EntryNode
+	prepend(*Entry)
 	append(*Entry)
 	appendEntries([]*Entry)
 }
@@ -51,15 +52,12 @@ func NewEntryLinkedList() IEntryLinkedList {
 func (p *EntryLinkedList) appendEntries(entries []*Entry) {
 	p.mutex.Lock()
 	for _, e := range entries {
-		value := func() string { return e.name }
-		action := func() {
-			if e.action != nil {
-				e.action()
-			}
+		if e == nil {
+			log.Fatal("Cannot append nil entry")
 		}
 		node := &EntryNode{
-			value:  value,
-			action: action,
+			value:   func() string { return e.name },
+			execute: func() { e.execute() },
 		}
 		if p.count == 0 {
 			p.head = node
@@ -76,16 +74,35 @@ func (p *EntryLinkedList) appendEntries(entries []*Entry) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryLinkedList) append(e *Entry) {
-	value := func() string { return e.name }
-	action := func() {
-		if e.action != nil {
-			e.action()
-		}
+func (p *EntryLinkedList) prepend(e *Entry) {
+	if e == nil {
+		log.Fatal("Cannot prepend nil entry")
 	}
 	node := &EntryNode{
-		value:  value,
-		action: action,
+		value:   func() string { return e.name },
+		execute: func() { e.execute() },
+	}
+	p.mutex.Lock()
+	if p.count == 0 {
+		p.head = node
+		p.tail = node
+	} else {
+		node.next = p.head
+		p.head = node
+	}
+	p.count += 1
+	p.mutex.Unlock()
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryLinkedList) append(e *Entry) {
+	if e == nil {
+		log.Fatal("Cannot append nil entry")
+	}
+	node := &EntryNode{
+		value:   func() string { return e.name },
+		execute: func() { e.execute() },
 	}
 	p.mutex.Lock()
 	if p.count == 0 {
@@ -118,7 +135,7 @@ func (p *EntryLinkedList) len() int {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-type hasher func(string) uint64
+type hasher func(string) uint32
 
 type IEntryHashTable interface {
 	emplace(*Entry)
@@ -128,18 +145,18 @@ type IEntryHashTable interface {
 type EntryHashTable struct {
 	mutex   sync.Mutex
 	hash    hasher
-	storage map[uint64][]*Entry
+	storage map[uint32][]*Entry
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 func hash() hasher {
 	h := sha256.New()
-	return func(s string) uint64 {
+	return func(s string) uint32 {
 		h.Reset()
 		h.Write([]byte(s))
 		bs := h.Sum(nil)
-		return binary.LittleEndian.Uint64(bs)
+		return binary.LittleEndian.Uint32(bs)
 	}
 }
 
@@ -148,13 +165,16 @@ func hash() hasher {
 func NewEntryHashTable() IEntryHashTable {
 	return &EntryHashTable{
 		hash:    hash(),
-		storage: make(map[uint64][]*Entry),
+		storage: make(map[uint32][]*Entry),
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 func (p *EntryHashTable) emplace(e *Entry) {
+	if e == nil {
+		log.Fatal("Cannot emplace nil entry")
+	}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 

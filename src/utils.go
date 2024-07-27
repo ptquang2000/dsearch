@@ -31,7 +31,7 @@ func loadCalculator(expr string) *Entry {
 		return nil
 	}
 
-	entry := Entry{action: nil}
+	entry := Entry{execute: func() {}}
 	if cal == math.Trunc(cal) {
 		entry.name = fmt.Sprintf(`%s = %d`, expr, int64(cal))
 	} else {
@@ -105,7 +105,7 @@ func buildAppEntry(path string, entry *desktop.Entry) *Entry {
 		}
 		cmd.Process.Release()
 	}
-	return &Entry{name: entry.Name, action: action}
+	return &Entry{name: entry.Name, execute: action}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -156,7 +156,7 @@ func buildFileEntry(path string) *Entry {
 		}
 		cmd.Process.Release()
 	}
-	return &Entry{name: path, action: action}
+	return &Entry{name: path, execute: action}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

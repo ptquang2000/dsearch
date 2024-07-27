@@ -13,19 +13,14 @@ type IEntryManager interface {
 	LoadEntries(SigRefresh) tea.Cmd
 	FilterEntry(SigRefresh, string) tea.Cmd
 	StopFilter() bool
-	SelectEntry(*EntryNode) bool
 }
+
 type EntryManager struct {
-	storage  IEntryHashTable
-	viewList IEntryLinkedList
-	count    atomic.Int32
-
-	entryChan   chan *Entry
+	storage     IEntryHashTable
+	viewList    IEntryLinkedList
 	fzfDelegate FzfDelegate
-
-	mutex sync.Mutex
-	wg    sync.WaitGroup
-	state atomic.Int32
+	wg          sync.WaitGroup
+	state       atomic.Int32
 }
 
 const (
@@ -47,12 +42,12 @@ func NewEntryManager() IEntryManager {
 
 func (p *EntryManager) LoadEntries(signal SigRefresh) tea.Cmd {
 	return func() tea.Msg {
-		p.entryChan = make(chan *Entry)
-		defer close(p.entryChan)
+		entryChan := make(chan *Entry)
+		defer close(entryChan)
 
-		go p.appendEntry(signal)
-		loadApplications(p.entryChan)
-		loadFiles(p.entryChan, true)
+		go p.appendEntry(entryChan, signal)
+		loadApplications(entryChan)
+		loadFiles(entryChan, true)
 
 		return LoadedMsg{}
 	}
@@ -69,13 +64,13 @@ func emit(signal SigRefresh, l IEntryLinkedList) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) appendEntry(signal SigRefresh) {
+func (p *EntryManager) appendEntry(entryChan chan *Entry, signal SigRefresh) {
 	if p.viewList != nil {
 		return
 	}
 
 	p.viewList = NewEntryLinkedList()
-	for entry := range p.entryChan {
+	for entry := range entryChan {
 		p.storage.emplace(entry)
 		p.viewList.append(entry)
 		if p.state.Load() == Filtering {
@@ -103,12 +98,13 @@ func (p *EntryManager) FilterEntry(signal SigRefresh, query string) tea.Cmd {
 		p.wg.Add(1)
 		defer p.wg.Done()
 
+		l := NewEntryLinkedList()
 		if entry := loadCalculator(query); entry != nil {
-
+			l.prepend(entry)
+			emit(signal, l)
 			query = entry.name
 		}
 
-		l := NewEntryLinkedList()
 		filterFn := func(name string) {
 			entries := p.storage.get(name)
 			l.appendEntries(entries)
@@ -135,16 +131,6 @@ func (p *EntryManager) loopEntries(stream FzfStream) {
 		iter = iter.next
 	}
 	close(stream)
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryManager) SelectEntry(entry *EntryNode) bool {
-	if entry.action != nil {
-		entry.action()
-		return true
-	}
-	return false
 }
 
 ///////////////////////////////////////////////////////////////////////////////
