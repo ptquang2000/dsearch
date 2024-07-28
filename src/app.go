@@ -24,7 +24,7 @@ type model struct {
 	manager   IEntryManager
 	textInput textinput.Model
 
-	sigRefresh SigRefresh
+	refreshCon SigRefresh
 	entries    IEntryLinkedList
 	cursor     int
 }
@@ -62,9 +62,10 @@ func Run() {
 		log.SetOutput(io.Discard)
 	}
 
+	refreshSignal := make(SigRefresh)
 	p := tea.NewProgram(&model{
-		manager:    NewEntryManager(),
-		sigRefresh: make(SigRefresh),
+		manager:    NewEntryManager(refreshSignal),
+		refreshCon: refreshSignal,
 		cursor:     0,
 	})
 	if _, err := p.Run(); err != nil {
@@ -80,8 +81,10 @@ func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.SetWindowTitle("DSearch"),
 		textinput.Blink,
-		onViewRefreshed(m.sigRefresh),
-		m.manager.LoadEntries(m.sigRefresh),
+		onViewRefreshed(m.refreshCon),
+		m.manager.LoadEntries(
+			func(c chan *Entry) { loadApplications(c) },
+			func(c chan *Entry) { loadFiles(c, true) }),
 	)
 }
 
@@ -106,18 +109,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RefreshingMsg:
 		m.entries = msg.list
 		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
-		return m, onViewRefreshed(m.sigRefresh)
+		return m, onViewRefreshed(m.refreshCon)
 	case LoadedMsg:
 		log.Println("Finished to load all entries")
-		return m, onViewRefreshed(m.sigRefresh)
+		return m, onViewRefreshed(m.refreshCon)
 	case QueryMsg:
 		log.Printf(`Received new query: %s`, msg.query)
-		return m, m.manager.FilterEntry(m.sigRefresh, msg.query)
+		return m, m.manager.FilterEntry(msg.query)
 	case FilteredMsg:
 		log.Println("Finished to filter query")
 		m.entries = msg.list
 		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
-		return m, onViewRefreshed(m.sigRefresh)
+		return m, onViewRefreshed(m.refreshCon)
 	case StoppedMsg:
 		log.Println("Filter execution was stopped")
 	case SelectedMsg:

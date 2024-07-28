@@ -2,6 +2,7 @@ package dsearch
 
 import (
 	"fmt"
+	"sync"
 
 	fzf "github.com/junegunn/fzf/src"
 )
@@ -9,34 +10,31 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 
 type FzfStream chan string
-type FzfDelegate struct {
-	input  FzfStream
-	output FzfStream
-}
+type FzfDelegate struct{}
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func NewFzfDelegate() FzfDelegate {
-	return FzfDelegate{}
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-func (p *FzfDelegate) execute(
+func (p *FzfDelegate) Execute(
 	query string,
 	foundCb func(string),
 	entryLoop func(FzfStream)) {
-	p.input = make(FzfStream)
-	p.output = make(FzfStream)
+	input := make(FzfStream)
+	output := make(FzfStream)
+	var fin sync.WaitGroup
+	fin.Add(1)
 	go func() {
-		for name := range p.output {
+		for name := range output {
 			foundCb(name)
 		}
+		fin.Done()
 	}()
 	go func() {
-		entryLoop(p.input)
+		entryLoop(input)
+		close(input)
 	}()
-	filter(query, p.input, p.output)
+	filter(query, input, output)
+	close(output)
+	fin.Wait()
 }
 
 ///////////////////////////////////////////////////////////////////////////////

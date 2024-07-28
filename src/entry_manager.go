@@ -10,8 +10,8 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 
 type IEntryManager interface {
-	LoadEntries(SigRefresh) tea.Cmd
-	FilterEntry(SigRefresh, string) tea.Cmd
+	LoadEntries(...func(chan *Entry)) tea.Cmd
+	FilterEntry(string) tea.Cmd
 	StopFilter() bool
 }
 
@@ -19,8 +19,11 @@ type EntryManager struct {
 	storage     IEntryHashTable
 	viewList    IEntryLinkedList
 	fzfDelegate FzfDelegate
+	dataReady   bool
+	cond        sync.Cond
 	wg          sync.WaitGroup
 	state       atomic.Int32
+	sigRefresh  SigRefresh
 }
 
 const (
@@ -31,23 +34,26 @@ const (
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func NewEntryManager() IEntryManager {
+func NewEntryManager(signal SigRefresh) IEntryManager {
 	return &EntryManager{
-		storage:     NewEntryHashTable(),
-		fzfDelegate: NewFzfDelegate(),
+		storage:    NewEntryHashTable(),
+		sigRefresh: signal,
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) LoadEntries(signal SigRefresh) tea.Cmd {
+func (p *EntryManager) LoadEntries(loaders ...func(chan *Entry)) tea.Cmd {
 	return func() tea.Msg {
 		entryChan := make(chan *Entry)
 		defer close(entryChan)
 
-		go p.appendEntry(entryChan, signal)
-		loadApplications(entryChan)
-		loadFiles(entryChan, true)
+		var mutex sync.Mutex
+		p.cond = *sync.NewCond(&mutex)
+		go p.appendEntry(entryChan)
+		for _, loader := range loaders {
+			loader(entryChan)
+		}
 
 		return LoadedMsg{}
 	}
@@ -64,7 +70,7 @@ func emit(signal SigRefresh, l IEntryLinkedList) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) appendEntry(entryChan chan *Entry, signal SigRefresh) {
+func (p *EntryManager) appendEntry(entryChan chan *Entry) {
 	if p.viewList != nil {
 		return
 	}
@@ -76,8 +82,13 @@ func (p *EntryManager) appendEntry(entryChan chan *Entry, signal SigRefresh) {
 		if p.state.Load() == Filtering {
 			continue
 		}
-		emit(signal, p.viewList)
+		emit(p.sigRefresh, p.viewList)
 	}
+
+	p.cond.L.Lock()
+	p.dataReady = true
+	p.cond.Broadcast()
+	p.cond.L.Unlock()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -88,7 +99,7 @@ func (p *EntryManager) StopFilter() bool {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) FilterEntry(signal SigRefresh, query string) tea.Cmd {
+func (p *EntryManager) FilterEntry(query string) tea.Cmd {
 	return func() tea.Msg {
 		if !p.state.CompareAndSwap(Filtered, Filtering) ||
 			!p.state.CompareAndSwap(Stopped, Filtering) {
@@ -101,19 +112,16 @@ func (p *EntryManager) FilterEntry(signal SigRefresh, query string) tea.Cmd {
 		l := NewEntryLinkedList()
 		if entry := loadCalculator(query); entry != nil {
 			l.prepend(entry)
-			emit(signal, l)
+			emit(p.sigRefresh, l)
 			query = entry.name
 		}
 
 		filterFn := func(name string) {
 			entries := p.storage.get(name)
 			l.appendEntries(entries)
-			emit(signal, l)
+			emit(p.sigRefresh, l)
 		}
-		loopFn := func(stream FzfStream) {
-			p.loopEntries(stream)
-		}
-		p.fzfDelegate.execute(query, filterFn, loopFn)
+		p.fzfDelegate.Execute(query, filterFn, p.loopEntries)
 
 		if p.state.CompareAndSwap(Filtering, Filtered) {
 			return FilteredMsg{l}
@@ -126,11 +134,22 @@ func (p *EntryManager) FilterEntry(signal SigRefresh, query string) tea.Cmd {
 
 func (p *EntryManager) loopEntries(stream FzfStream) {
 	iter := p.viewList.begin()
-	for i := 0; i < p.viewList.len() && p.state.Load() != Stopped; i++ {
+	count := p.viewList.len()
+	condition := func() bool {
+		return count != p.viewList.len() || p.dataReady
+	}
+	for i := 0; i < count && p.state.Load() != Stopped; i++ {
 		stream <- iter.value()
+
+		p.cond.L.Lock()
+		for !condition() {
+			p.cond.Wait()
+		}
+		p.cond.L.Unlock()
+
+		count = p.viewList.len()
 		iter = iter.next
 	}
-	close(stream)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
