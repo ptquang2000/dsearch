@@ -27,6 +27,7 @@ type EntryNode struct {
 type IEntryLinkedList interface {
 	len() int
 	begin() *EntryNode
+	end() *EntryNode
 	prepend(*Entry)
 	append(*Entry)
 	appendEntries([]*Entry)
@@ -127,6 +128,14 @@ func (p *EntryLinkedList) begin() *EntryNode {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+func (p *EntryLinkedList) end() *EntryNode {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return p.tail
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 func (p *EntryLinkedList) len() int {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -180,7 +189,7 @@ func (p *EntryHashTable) emplace(e *Entry) {
 
 	key := p.hash(e.name)
 	if table, ok := p.storage[key]; ok {
-		table = append(table, e)
+		p.storage[key] = append(table, e)
 		return
 	}
 	p.storage[key] = make([]*Entry, 0, 1)
