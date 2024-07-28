@@ -91,9 +91,6 @@ func TestFilterEntryBeforeDataReadyCase1(t *testing.T) {
 			if i == 42690 {
 				wg.Done()
 			}
-			if i == 96969 {
-				t.Logf(`There is 96969`)
-			}
 		}
 		fin.Done()
 	}
@@ -167,7 +164,6 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 				wg.Done()
 			}
 		}
-		t.Logf(`Finished to load dummies`)
 		fin.Done()
 	}
 	fin.Add(1)
