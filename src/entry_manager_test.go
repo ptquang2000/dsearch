@@ -1,6 +1,7 @@
 package dsearch
 
 import (
+	"math/rand"
 	"slices"
 	"strconv"
 	"sync"
@@ -103,6 +104,9 @@ func TestFilterEntry(t *testing.T) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func TestFilterEntryBeforeDataReadyCase1(t *testing.T) {
+	// NOTE:
+	// Begin to filter while loading all entries.
+	// The result contains only loaded entries after starting point.
 	var expected, result []string
 	var wg, fin sync.WaitGroup
 	m := NewEntryManager(nil)
@@ -139,6 +143,9 @@ func TestFilterEntryBeforeDataReadyCase1(t *testing.T) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func TestFilterEntryBeforeDataReadyCase2(t *testing.T) {
+	// NOTE:
+	// Begin to filter while loading all entries.
+	// The result contains only loaded entries before starting point.
 	var expected, result []string
 	var wg, fin sync.WaitGroup
 	m := NewEntryManager(nil)
@@ -175,6 +182,9 @@ func TestFilterEntryBeforeDataReadyCase2(t *testing.T) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
+	// NOTE:
+	// Begin to filter while loading all entries.
+	// The result contains loaded entries before and after starting point.
 	var expected, result []string
 	var wg, fin sync.WaitGroup
 	m := NewEntryManager(nil)
@@ -220,3 +230,62 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+
+func TestStopFilter(t *testing.T) {
+	var fin sync.WaitGroup
+	refreshCon := make(SigRefresh)
+	m := NewEntryManager(refreshCon)
+	loadDummies := func(entryChan chan *Entry) {
+		for i := uint64(0); i < 100000; i++ {
+			entryChan <- &Entry{
+				name: strconv.FormatUint(i, 10) + "_"}
+		}
+	}
+	m.LoadEntries(loadDummies)()
+
+	expectFin := func(s string) int {
+		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
+			t.Errorf(`Expected FilteredMsg got %v`, msg)
+		} else {
+			return msg.list.len()
+		}
+		return 0
+	}
+	query := "69_"
+	length := expectFin(query)
+
+	stopFilter := func() {
+		fin.Add(1)
+		defer fin.Done()
+
+		count := 0
+		for {
+			_, ok := <-refreshCon
+			if !ok {
+				break
+			}
+			if count >= length {
+				break
+			}
+			if count >= rand.Intn(length) {
+				m.StopFilter()
+				return
+			}
+			count += 1
+		}
+		t.Errorf(`Should not be stopped by closed chan`)
+	}
+	expectStop := func(s string) {
+		if msg, ok := m.FilterEntry(s)().(StoppedMsg); !ok {
+			t.Errorf(`Expected StoppedMsg got %v`, msg)
+		}
+	}
+	for i := 0; i < 10; i++ {
+		go stopFilter()
+		expectStop(query)
+	}
+
+	expectFin(query)
+	close(refreshCon)
+	fin.Wait()
+}

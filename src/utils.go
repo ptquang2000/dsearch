@@ -101,7 +101,10 @@ func buildAppEntry(path string, entry *desktop.Entry) *Entry {
 			Setsid:     true,
 		}
 		if err := cmd.Start(); err != nil {
-			log.Fatalf("Failed to exec %s, err:%v", cmd.String(), err)
+			log.Fatalf(
+				`Failed to exec %s, err:%v`,
+				cmd.String(),
+				err)
 		}
 		cmd.Process.Release()
 	}
@@ -113,7 +116,7 @@ func buildAppEntry(path string, entry *desktop.Entry) *Entry {
 func loadFiles(entryChan chan *Entry, hidden bool) bool {
 	root, err := os.UserHomeDir()
 	if err != nil {
-		log.Println("Failed to locate home directory")
+		log.Printf(`Failed to locate home directory`)
 		return false
 	}
 
@@ -152,7 +155,10 @@ func buildFileEntry(path string) *Entry {
 			Setsid:     true,
 		}
 		if err := cmd.Start(); err != nil {
-			log.Fatalf("Failed to exec %s, err:%v", cmd.String(), err)
+			log.Fatalf(
+				`Failed to exec %s, err:%v`,
+				cmd.String(),
+				err)
 		}
 		cmd.Process.Release()
 	}

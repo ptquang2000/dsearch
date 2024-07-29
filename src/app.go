@@ -31,7 +31,7 @@ type model struct {
 type RefreshingMsg struct{ list IEntryLinkedList }
 type LoadedMsg struct{}
 type FilteredMsg struct{ list IEntryLinkedList }
-type StoppedMsg struct{}
+type StoppedMsg struct{ list IEntryLinkedList }
 type QueryMsg struct {
 	query string
 }
@@ -77,7 +77,7 @@ func Run() {
 ///////////////////////////////////////////////////////////////////////////////
 
 func (m *model) Init() tea.Cmd {
-	log.Println("Initializing")
+	log.Printf(`Initializing`)
 	return tea.Batch(
 		tea.SetWindowTitle("DSearch"),
 		textinput.Blink,
@@ -111,18 +111,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
 		return m, onViewRefreshed(m.refreshCon)
 	case LoadedMsg:
-		log.Println("Finished to load all entries")
+		log.Printf(`Finished to load all entries`)
 		return m, onViewRefreshed(m.refreshCon)
 	case QueryMsg:
 		log.Printf(`Received new query: %s`, msg.query)
 		return m, m.manager.FilterEntry(msg.query)
 	case FilteredMsg:
-		log.Println("Finished to filter query")
+		log.Printf(`Finished to filter query`)
 		m.entries = msg.list
 		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
 		return m, onViewRefreshed(m.refreshCon)
 	case StoppedMsg:
-		log.Println("Filter execution was stopped")
+		log.Printf(`Filter execution was stopped`)
+		m.entries = msg.list
+		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
+		return m, onViewRefreshed(m.refreshCon)
 	case SelectedMsg:
 		name := msg.entry.value()
 		log.Printf(`Select entry %s`, name)
