@@ -94,7 +94,12 @@ func (p *EntryManager) appendEntry(entryChan chan *Entry) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func (p *EntryManager) StopFilter() bool {
-	return p.state.CompareAndSwap(Filtering, Stopped)
+	var isFiltering bool
+	p.cond.L.Lock()
+	isFiltering = p.state.CompareAndSwap(Filtering, Stopped)
+	p.cond.Broadcast()
+	p.cond.L.Unlock()
+	return isFiltering
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -136,9 +141,9 @@ func (p *EntryManager) loopEntries(stream FzfStream) {
 	iter := p.viewList.begin()
 	count := p.viewList.len()
 	condition := func() bool {
-		return count != p.viewList.len() || p.dataReady
+		return count != p.viewList.len() || p.dataReady || p.state.Load() == Stopped
 	}
-	for i := 0; i < count && p.state.Load() != Stopped; i++ {
+	for i := 0; i < count; i++ {
 		stream <- iter.value()
 
 		p.cond.L.Lock()
@@ -146,6 +151,10 @@ func (p *EntryManager) loopEntries(stream FzfStream) {
 			p.cond.Wait()
 		}
 		p.cond.L.Unlock()
+
+		if p.state.Load() == Stopped {
+			break
+		}
 
 		count = p.viewList.len()
 		iter = iter.next

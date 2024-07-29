@@ -113,7 +113,7 @@ func buildAppEntry(path string, entry *desktop.Entry) *Entry {
 func loadFiles(entryChan chan *Entry, hidden bool) bool {
 	root, err := os.UserHomeDir()
 	if err != nil {
-		log.Println("Failed to locate home directory")
+		log.Printf(`Failed to locate home directory`)
 		return false
 	}
 
