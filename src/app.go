@@ -31,7 +31,7 @@ type model struct {
 type RefreshingMsg struct{ list IEntryLinkedList }
 type LoadedMsg struct{}
 type FilteredMsg struct{ list IEntryLinkedList }
-type StoppedMsg struct{}
+type StoppedMsg struct{ list IEntryLinkedList }
 type QueryMsg struct {
 	query string
 }
@@ -123,6 +123,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, onViewRefreshed(m.refreshCon)
 	case StoppedMsg:
 		log.Printf(`Filter execution was stopped`)
+		m.entries = msg.list
+		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
+		return m, onViewRefreshed(m.refreshCon)
 	case SelectedMsg:
 		name := msg.entry.value()
 		log.Printf(`Select entry %s`, name)
