@@ -36,13 +36,19 @@ $(BUILD_DIR)/%: %/main.go $(GO_SRCS)
 	$(GO_BUILD) -o $@ $(GO_BUILD_FLAGS) $(call submodule_path, $@)
 
 GO_TEST := go test -v ./...
+GO_BENCH := go test ./... -benchtime 100x -bench
 
 .PHONY: test
 test:
 	$(GO_TEST)
-
 Test%:
 	$(GO_TEST) -run $@
+
+.PHONY: bench
+bench:
+	$(GO_BENCH) .
+Benchmark%:
+	$(GO_BENCH) $@
 
 .PHONY: clean
 clean:

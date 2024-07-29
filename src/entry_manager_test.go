@@ -10,12 +10,34 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 
 func BenchmarkLoadEntries(b *testing.B) {
+	// NOTE: Records
+	// commits 6e1973f00fccdfc2da12ab91a0320d32d04f3657
+	// BenchmarkFilterEntry-16		100         966271470 ns/op
 	for i := 0; i < b.N; i++ {
 		m := NewEntryManager(nil)
 		m.LoadEntries(
 			func(c chan *Entry) { loadApplications(c) },
 			func(c chan *Entry) { loadFiles(c, true) },
 		)()
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func BenchmarkFilterEntry(b *testing.B) {
+	// NOTE: Records
+	// commits 6e1973f00fccdfc2da12ab91a0320d32d04f3657
+	// BenchmarkFilterEntry-16              100         518055988 ns/op
+	m := NewEntryManager(nil)
+	m.LoadEntries(func(entryChan chan *Entry) {
+		for i := uint64(0); i < 1000000; i++ {
+			entryChan <- &Entry{
+				name: strconv.FormatUint(i, 10) + "_"}
+		}
+	})()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.FilterEntry("999999_")()
 	}
 }
 
