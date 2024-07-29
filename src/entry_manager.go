@@ -66,7 +66,7 @@ func (p *EntryManager) LoadEntries(loaders ...func(chan *Entry)) tea.Cmd {
 
 func emit(signal SigRefresh, l IEntryLinkedList) {
 	select {
-	case signal <- RefreshingMsg{l}:
+	case signal <- RefreshedMsg{l}:
 	default:
 	}
 }

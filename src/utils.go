@@ -75,6 +75,11 @@ func walkDataDir(root string, entryChan chan *Entry) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func parseDesktopFile(path string, entryChan chan *Entry) {
+	parts := strings.Split(path, ".")
+	if len(parts) < 2 || parts[len(parts)-1] != "desktop" {
+		return
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		log.Printf(`Failed to open file %s, err:%v`, path, err)
