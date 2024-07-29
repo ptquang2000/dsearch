@@ -16,7 +16,6 @@ type IEntryManager interface {
 
 type EntryManager struct {
 	storage     IEntryHashTable
-	viewList    IEntryLinkedList
 	fzfDelegate FzfDelegate
 	mutex       sync.Mutex
 	cond        sync.Cond
@@ -64,9 +63,9 @@ func (p *EntryManager) LoadEntries(loaders ...func(chan *Entry)) tea.Cmd {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func emit(signal SigRefresh, l IEntryLinkedList) {
+func emit(signal SigRefresh, entries []EntryNode) {
 	select {
-	case signal <- RefreshedMsg{l}:
+	case signal <- RefreshedMsg{entries}:
 	default:
 	}
 }
@@ -74,10 +73,6 @@ func emit(signal SigRefresh, l IEntryLinkedList) {
 ///////////////////////////////////////////////////////////////////////////////
 
 func (p *EntryManager) appendEntry(entryChan chan *Entry) {
-	if p.viewList != nil {
-		return
-	}
-
 	shouldEmit := func() bool {
 		p.cond.L.Lock()
 		defer p.cond.Broadcast()
@@ -87,12 +82,12 @@ func (p *EntryManager) appendEntry(entryChan chan *Entry) {
 		return p.state != Filtering
 	}
 
-	p.viewList = NewEntryLinkedList()
+	nodes := []EntryNode{}
 	for entry := range entryChan {
 		p.storage.emplace(entry)
-		p.viewList.append(entry)
 		if shouldEmit() {
-			emit(p.sigRefresh, p.viewList)
+			nodes = append(nodes, entry)
+			emit(p.sigRefresh, nodes)
 		}
 	}
 
@@ -126,26 +121,21 @@ func (p *EntryManager) FilterEntry(query string) tea.Cmd {
 		}
 		p.state = Filtering
 	}
+	var nodes []EntryNode
+	filterFn := func(name string) {
+		for _, e := range p.storage.get(name) {
+			nodes = append(nodes, e)
+		}
+		emit(p.sigRefresh, nodes)
+	}
 	return func() tea.Msg {
 		wait()
-		if len(query) == 0 {
-			p.cond.L.Lock()
-			defer p.cond.L.Unlock()
-			p.state = Filtered
-			return FilteredMsg{p.viewList}
-		}
 
-		l := NewEntryLinkedList()
+		nodes = nil
 		if entry := loadCalculator(query); entry != nil {
-			l.prepend(entry)
-			emit(p.sigRefresh, l)
+			nodes = append(nodes, entry)
+			emit(p.sigRefresh, nodes)
 			query = entry.name
-		}
-
-		filterFn := func(name string) {
-			entries := p.storage.get(name)
-			l.appendEntries(entries)
-			emit(p.sigRefresh, l)
 		}
 		p.fzfDelegate.Execute(query, filterFn, p.loopEntries)
 
@@ -153,10 +143,10 @@ func (p *EntryManager) FilterEntry(query string) tea.Cmd {
 		defer p.cond.L.Unlock()
 		if p.state == Filtering {
 			p.state = Filtered
-			return FilteredMsg{l}
+			return FilteredMsg{nodes}
 		}
 		p.state = Stopped
-		return StoppedMsg{l}
+		return StoppedMsg{nodes}
 	}
 }
 
@@ -177,8 +167,8 @@ func (p *EntryManager) loopEntries(stream FzfStream) {
 		}
 		return isStopped
 	}
-	for iter := p.viewList.begin(); iter != nil; iter = iter.next {
-		stream <- iter.value()
+	for iter := p.storage.begin(); iter != nil; iter = iter.Next() {
+		stream <- iter.Value()
 		if !wait() {
 			break
 		}
