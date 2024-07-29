@@ -48,10 +48,10 @@ func BenchmarkFilterEntry(b *testing.B) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryNode) extract() []string {
+func extract(nodes []EntryNode) []string {
 	var result []string
-	for i := p; i != nil; i = i.next {
-		result = append(result, i.value())
+	for _, node := range nodes {
+		result = append(result, node.Value())
 	}
 	return result
 }
@@ -70,7 +70,7 @@ func TestFilterEntry(t *testing.T) {
 	m.LoadEntries(loadDummies)()
 	filterEntry := func(s string) {
 		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = msg.list.begin().extract()
+			result = extract(msg.nodes)
 		} else {
 			t.Errorf(`Expected FilteredMsg got %v`, msg)
 		}
@@ -129,7 +129,7 @@ func TestFilterEntryBeforeDataReadyCase1(t *testing.T) {
 	go m.LoadEntries(loadDummies)()
 	filterEntry := func(s string) {
 		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = msg.list.begin().extract()
+			result = extract(msg.nodes)
 		} else {
 			t.Errorf(`Expected FilteredMsg got %v`, msg)
 		}
@@ -168,7 +168,7 @@ func TestFilterEntryBeforeDataReadyCase2(t *testing.T) {
 	go m.LoadEntries(loadDummies)()
 	filterEntry := func(s string) {
 		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = msg.list.begin().extract()
+			result = extract(msg.nodes)
 		} else {
 			t.Errorf(`Expected FilteredMsg got %v`, msg)
 		}
@@ -207,7 +207,7 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 	go m.LoadEntries(loadDummies)()
 	filterEntry := func(s string) {
 		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = msg.list.begin().extract()
+			result = extract(msg.nodes)
 		} else {
 			t.Errorf(`Expected FilteredMsg got %v`, msg)
 		}
@@ -251,7 +251,7 @@ func TestStopFilter(t *testing.T) {
 		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
 			t.Errorf(`Expected FilteredMsg got %v`, msg)
 		} else {
-			return msg.list.len()
+			return len(msg.nodes)
 		}
 		return 0
 	}
