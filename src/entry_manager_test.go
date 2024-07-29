@@ -241,6 +241,19 @@ func TestStopFilter(t *testing.T) {
 				name: strconv.FormatUint(i, 10) + "_"}
 		}
 	}
+	m.LoadEntries(loadDummies)()
+
+	expectFin := func(s string) int {
+		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
+			t.Errorf(`Expected FilteredMsg got %v`, msg)
+		} else {
+			return msg.list.len()
+		}
+		return 0
+	}
+	query := "69_"
+	length := expectFin(query)
+
 	stopFilter := func() {
 		fin.Add(1)
 		defer fin.Done()
@@ -251,10 +264,10 @@ func TestStopFilter(t *testing.T) {
 			if !ok {
 				break
 			}
-			if count >= 1000 {
+			if count >= length {
 				break
 			}
-			if count >= rand.Intn(1000) {
+			if count >= rand.Intn(length) {
 				m.StopFilter()
 				return
 			}
@@ -262,24 +275,17 @@ func TestStopFilter(t *testing.T) {
 		}
 		t.Errorf(`Should not be stopped by closed chan`)
 	}
-	m.LoadEntries(loadDummies)()
-
-	expectFin := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
 	expectStop := func(s string) {
 		if msg, ok := m.FilterEntry(s)().(StoppedMsg); !ok {
 			t.Errorf(`Expected StoppedMsg got %v`, msg)
 		}
 	}
-
 	for i := 0; i < 10; i++ {
 		go stopFilter()
-		expectStop("69_")
+		expectStop(query)
 	}
-	expectFin("69_")
+
+	expectFin(query)
 	close(refreshCon)
 	fin.Wait()
 }
