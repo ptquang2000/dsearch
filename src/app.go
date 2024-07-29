@@ -15,7 +15,7 @@ import (
 
 ///////////////////////////////////////////////////////////////////////////////
 
-type SigRefresh chan RefreshingMsg
+type SigRefresh chan RefreshedMsg
 type model struct {
 	ready  bool
 	height int
@@ -28,16 +28,12 @@ type model struct {
 	entries    IEntryLinkedList
 	cursor     int
 }
-type RefreshingMsg struct{ list IEntryLinkedList }
+type RefreshedMsg struct{ list IEntryLinkedList }
 type LoadedMsg struct{}
 type FilteredMsg struct{ list IEntryLinkedList }
 type StoppedMsg struct{ list IEntryLinkedList }
-type QueryMsg struct {
-	query string
-}
-type SelectedMsg struct {
-	entry *EntryNode
-}
+type QueryMsg struct{ query string }
+type SelectedMsg struct{ entry *EntryNode }
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -106,7 +102,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.onWindowReady()
 			m.ready = true
 		}
-	case RefreshingMsg:
+	case RefreshedMsg:
 		m.entries = msg.list
 		m.cursor = max(min(m.cursor, m.entries.len()-1), 0)
 		return m, onViewRefreshed(m.refreshCon)
@@ -139,9 +135,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func onViewRefreshed(sigRefreshed chan RefreshingMsg) tea.Cmd {
+func onViewRefreshed(sigRefreshed chan RefreshedMsg) tea.Cmd {
 	return func() tea.Msg {
-		return RefreshingMsg(<-sigRefreshed)
+		return RefreshedMsg(<-sigRefreshed)
 	}
 }
 

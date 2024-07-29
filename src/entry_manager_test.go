@@ -12,8 +12,10 @@ import (
 
 func BenchmarkLoadEntries(b *testing.B) {
 	// NOTE: Records
-	// commits 6e1973f00fccdfc2da12ab91a0320d32d04f3657
+	// commit 6e1973f00fccdfc2da12ab91a0320d32d04f3657
 	// BenchmarkFilterEntry-16		100         966271470 ns/op
+	// commit 7939b70c8b2e40f2b69a9b4593c1e7c4d2f34385
+	// BenchmarkLoadEntries-16		100         950366550 ns/op
 	for i := 0; i < b.N; i++ {
 		m := NewEntryManager(nil)
 		m.LoadEntries(
@@ -27,8 +29,10 @@ func BenchmarkLoadEntries(b *testing.B) {
 
 func BenchmarkFilterEntry(b *testing.B) {
 	// NOTE: Records
-	// commits 6e1973f00fccdfc2da12ab91a0320d32d04f3657
+	// commit 6e1973f00fccdfc2da12ab91a0320d32d04f3657
 	// BenchmarkFilterEntry-16              100         518055988 ns/op
+	// commit 7939b70c8b2e40f2b69a9b4593c1e7c4d2f34385
+	// BenchmarkFilterEntry-16              100         445740950 ns/op
 	m := NewEntryManager(nil)
 	m.LoadEntries(func(entryChan chan *Entry) {
 		for i := uint64(0); i < 1000000; i++ {
