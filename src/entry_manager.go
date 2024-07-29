@@ -141,7 +141,9 @@ func (p *EntryManager) loopEntries(stream FzfStream) {
 	iter := p.viewList.begin()
 	count := p.viewList.len()
 	condition := func() bool {
-		return count != p.viewList.len() || p.dataReady || p.state.Load() == Stopped
+		return count != p.viewList.len() ||
+			p.dataReady ||
+			p.state.Load() == Stopped
 	}
 	for i := 0; i < count; i++ {
 		stream <- iter.value()
