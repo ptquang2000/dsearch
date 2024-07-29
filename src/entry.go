@@ -54,7 +54,7 @@ func (p *EntryLinkedList) appendEntries(entries []*Entry) {
 	p.mutex.Lock()
 	for _, e := range entries {
 		if e == nil {
-			log.Fatal("Cannot append nil entry")
+			log.Fatalf(`Cannot append nil entry`)
 		}
 		node := &EntryNode{
 			value:   func() string { return e.name },
@@ -77,7 +77,7 @@ func (p *EntryLinkedList) appendEntries(entries []*Entry) {
 
 func (p *EntryLinkedList) prepend(e *Entry) {
 	if e == nil {
-		log.Fatal("Cannot prepend nil entry")
+		log.Fatalf(`Cannot prepend nil entry`)
 	}
 	node := &EntryNode{
 		value:   func() string { return e.name },
@@ -99,7 +99,7 @@ func (p *EntryLinkedList) prepend(e *Entry) {
 
 func (p *EntryLinkedList) append(e *Entry) {
 	if e == nil {
-		log.Fatal("Cannot append nil entry")
+		log.Fatalf(`Cannot append nil entry`)
 	}
 	node := &EntryNode{
 		value:   func() string { return e.name },
@@ -182,7 +182,7 @@ func NewEntryHashTable() IEntryHashTable {
 
 func (p *EntryHashTable) emplace(e *Entry) {
 	if e == nil {
-		log.Fatal("Cannot emplace nil entry")
+		log.Fatalf(`Cannot emplace nil entry`)
 	}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -205,7 +205,7 @@ func (p *EntryHashTable) get(s string) []*Entry {
 	key := p.hash(s)
 	table, ok := p.storage[key]
 	if !ok {
-		log.Fatalf("Key %d not found in storage", key)
+		log.Fatalf(`Key %d not found in storage`, key)
 	}
 	return table
 }
