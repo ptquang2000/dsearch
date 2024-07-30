@@ -139,7 +139,7 @@ func (p *EntryManager) FilterEntry(query string) tea.Cmd {
 			query = entry.name
 		}
 
-		p.filterSync(foundFn, query)
+		p.filterAsync(foundFn, query)
 
 		p.cond.L.Lock()
 		defer p.cond.L.Unlock()
