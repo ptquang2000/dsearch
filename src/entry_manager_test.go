@@ -19,7 +19,7 @@ func BenchmarkLoadEntries(b *testing.B) {
 	// commit 92d80fc1194da079556b44c0e62a0939ba195231
 	// BenchmarkLoadEntries-16              100         918217414 ns/op
 	for i := 0; i < b.N; i++ {
-		m := NewEntryManager(nil)
+		m := NewEntryManager(nil, FzfConfig{true, true, 0})
 		m.LoadEntries(
 			func(c chan *Entry) { loadApplications(c) },
 			func(c chan *Entry) { loadFiles(c, true) },
@@ -37,7 +37,12 @@ func BenchmarkFilterEntry(b *testing.B) {
 	// BenchmarkFilterEntry-16              100         445740950 ns/op
 	// commit 92d80fc1194da079556b44c0e62a0939ba195231
 	// BenchmarkFilterEntry-16              100         479693914 ns/op
-	m := NewEntryManager(nil)
+	// commit c3460cc6a60e1d9dcbaf5873ef0efa0a21bf5562
+	// BenchmarkFilterEntry-16              100         444117061 ns/op
+	// commit 2bc250b3d1239c8fcc85b4a046b39056cf3f884e
+	// BenchmarkFilterEntry-16              100         256185131 ns/op
+
+	m := NewEntryManager(nil, FzfConfig{true, true, 0})
 	m.LoadEntries(func(entryChan chan *Entry) {
 		for i := uint64(0); i < 1000000; i++ {
 			entryChan <- &Entry{
@@ -52,10 +57,13 @@ func BenchmarkFilterEntry(b *testing.B) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func extract(nodes []EntryNode) []string {
+func extract(nodes IEntryLinkedList) []string {
 	var result []string
-	for _, node := range nodes {
-		result = append(result, node.Value())
+	if nodes.len() == 0 {
+		return result
+	}
+	for it := nodes.begin(); it != nil; it = it.Next() {
+		result = append(result, it.Value())
 	}
 	return result
 }
@@ -64,7 +72,7 @@ func extract(nodes []EntryNode) []string {
 
 func TestFilterEntry(t *testing.T) {
 	var expected, result []string
-	m := NewEntryManager(nil)
+	m := NewEntryManager(nil, FzfConfig{true, true, 0})
 	loadDummies := func(entryChan chan *Entry) {
 		for i := uint64(0); i < 1000000; i++ {
 			entryChan <- &Entry{
@@ -92,6 +100,8 @@ func TestFilterEntry(t *testing.T) {
 		"742069_",
 		"842069_",
 		"942069_"}
+	slices.Sort(expected)
+	slices.Sort(result)
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
@@ -117,7 +127,7 @@ func TestFilterEntryBeforeDataReadyCase1(t *testing.T) {
 	// The result contains only loaded entries after starting point.
 	var expected, result []string
 	var wg, fin sync.WaitGroup
-	m := NewEntryManager(nil)
+	m := NewEntryManager(nil, FzfConfig{true, true, 0})
 	loadDummies := func(entryChan chan *Entry) {
 		for i := uint64(0); i < 100000; i++ {
 			entryChan <- &Entry{
@@ -156,7 +166,7 @@ func TestFilterEntryBeforeDataReadyCase2(t *testing.T) {
 	// The result contains only loaded entries before starting point.
 	var expected, result []string
 	var wg, fin sync.WaitGroup
-	m := NewEntryManager(nil)
+	m := NewEntryManager(nil, FzfConfig{true, true, 0})
 	loadDummies := func(entryChan chan *Entry) {
 		for i := uint64(0); i < 100000; i++ {
 			entryChan <- &Entry{
@@ -195,7 +205,7 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 	// The result contains loaded entries before and after starting point.
 	var expected, result []string
 	var wg, fin sync.WaitGroup
-	m := NewEntryManager(nil)
+	m := NewEntryManager(nil, FzfConfig{true, true, 0})
 	loadDummies := func(entryChan chan *Entry) {
 		for i := uint64(0); i < 100000; i++ {
 			entryChan <- &Entry{
@@ -231,6 +241,8 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 		"86969_",
 		"96969_",
 	}
+	slices.Sort(expected)
+	slices.Sort(result)
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
@@ -242,7 +254,7 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 func TestStopFilter(t *testing.T) {
 	var fin sync.WaitGroup
 	refreshCon := make(SigRefresh)
-	m := NewEntryManager(refreshCon)
+	m := NewEntryManager(refreshCon, FzfConfig{true, true, 0})
 	loadDummies := func(entryChan chan *Entry) {
 		for i := uint64(0); i < 100000; i++ {
 			entryChan <- &Entry{
@@ -255,7 +267,7 @@ func TestStopFilter(t *testing.T) {
 		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
 			t.Errorf(`Expected FilteredMsg got %v`, msg)
 		} else {
-			return len(msg.nodes)
+			return msg.nodes.len()
 		}
 		return 0
 	}

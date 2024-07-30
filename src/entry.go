@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"log"
+	"runtime/debug"
 	"sync"
 )
 
@@ -43,21 +44,39 @@ func (p *Entry) Next() EntryNode {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+type IEntryLinkedList interface {
+	len() int
+	begin() EntryNode
+	end() EntryNode
+	at(int) EntryNode
+	emplace_back(*Entry)
+	push_back(EntryNode)
+}
+
+type EntryLinkedList struct {
+	mutex sync.Mutex
+	array []*Entry
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func NewEntryLinkedList() IEntryLinkedList {
+	return new(EntryLinkedList)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 type hasher func(string) uint32
 
 type IEntryHashTable interface {
-	emplace(*Entry)
+	IEntryLinkedList
 	get(string) []EntryNode
-	begin() EntryNode
-	end() EntryNode
 }
 
 type EntryHashTable struct {
-	mutex   sync.Mutex
-	hash    hasher
-	head    *Entry
-	tail    *Entry
-	storage map[uint32][]EntryNode
+	EntryLinkedList
+	hash  hasher
+	table map[uint32][]EntryNode
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -76,30 +95,93 @@ func hash() hasher {
 
 func NewEntryHashTable() IEntryHashTable {
 	return &EntryHashTable{
-		hash:    hash(),
-		storage: make(map[uint32][]EntryNode),
+		hash:  hash(),
+		table: make(map[uint32][]EntryNode),
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryHashTable) emplace(e *Entry) {
-	if e == nil {
-		log.Fatalf(`Cannot emplace nil entry`)
-	}
+func (p *EntryHashTable) push_back(e EntryNode) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	key := p.hash(e.name)
-	if len(p.storage) == 0 {
-		p.head = e
-		p.tail = e
-	} else {
-		p.tail.next = e
-		p.tail = e
-		p.tail.next = nil
+	if e == nil {
+		debug.PrintStack()
+		log.Fatalf(`Cannot emplace nil entry`)
 	}
-	p.storage[key] = append(p.storage[key], e)
+
+	_e := &Entry{
+		name:    e.Value(),
+		execute: e.Execute,
+		next:    nil,
+	}
+	key := p.hash(_e.name)
+	p.table[key] = append(p.table[key], _e)
+
+	if len(p.array) > 0 {
+		p.array[len(p.array)-1].next = _e
+	}
+	p.array = append(p.array, _e)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryHashTable) emplace_back(e *Entry) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if e == nil {
+		debug.PrintStack()
+		log.Fatalf(`Cannot emplace nil entry`)
+	}
+
+	key := p.hash(e.name)
+	p.table[key] = append(p.table[key], e)
+
+	if len(p.array) > 0 {
+		p.array[len(p.array)-1].next = e
+	}
+	p.array = append(p.array, e)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryLinkedList) push_back(e EntryNode) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if e == nil {
+		debug.PrintStack()
+		log.Fatalf(`Cannot emplace nil entry`)
+	}
+
+	_e := &Entry{
+		name:    e.Value(),
+		execute: e.Execute,
+		next:    nil,
+	}
+	if len(p.array) > 0 {
+		p.array[len(p.array)-1].next = _e
+	}
+	p.array = append(p.array, _e)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryLinkedList) emplace_back(e *Entry) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if e == nil {
+		debug.PrintStack()
+		log.Fatalf(`Cannot emplace nil entry`)
+	}
+
+	if len(p.array) > 0 {
+		p.array[len(p.array)-1].next = e
+	}
+	p.array = append(p.array, e)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -109,8 +191,9 @@ func (p *EntryHashTable) get(s string) []EntryNode {
 	defer p.mutex.Unlock()
 
 	key := p.hash(s)
-	table, ok := p.storage[key]
+	table, ok := p.table[key]
 	if !ok {
+		debug.PrintStack()
 		log.Fatalf(`Key %d not found in storage`, key)
 	}
 	return table
@@ -118,26 +201,49 @@ func (p *EntryHashTable) get(s string) []EntryNode {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryHashTable) begin() EntryNode {
+func (p *EntryLinkedList) begin() EntryNode {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	if len(p.storage) == 0 {
-		log.Fatalf(`Accessing empty hash table`)
+	if len(p.array) == 0 {
+		debug.PrintStack()
+		log.Fatalf(`Index %d out of range %d`, 0, len(p.array))
 	}
-	return p.head
+	return p.array[0]
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryHashTable) end() EntryNode {
+func (p *EntryLinkedList) end() EntryNode {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	if len(p.storage) == 0 {
-		log.Fatalf(`Accessing empty hash table`)
+	if len(p.array) == 0 {
+		debug.PrintStack()
+		log.Fatalf(`Index %d out of range %d`, 0, len(p.array))
 	}
-	return p.tail
+	return p.array[len(p.array)-1]
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryLinkedList) len() int {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return len(p.array)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryLinkedList) at(i int) EntryNode {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if i >= len(p.array) {
+		debug.PrintStack()
+		log.Fatalf(`Index %d out of range %d`, i, len(p.array))
+	}
+	return p.array[i]
 }
 
 ////////////////////////////////////////////////////////////////////////////////
