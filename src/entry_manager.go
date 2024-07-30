@@ -1,6 +1,7 @@
 package dsearch
 
 import (
+	"runtime"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,7 +17,7 @@ type IEntryManager interface {
 
 type EntryManager struct {
 	storage     IEntryHashTable
-	fzfDelegate FzfDelegate
+	fzfDelegate IFzfDelegate
 	mutex       sync.Mutex
 	cond        sync.Cond
 	dataReady   bool
@@ -36,10 +37,11 @@ const (
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func NewEntryManager(signal SigRefresh) IEntryManager {
+func NewEntryManager(signal SigRefresh, cfg FzfConfig) IEntryManager {
 	p := &EntryManager{
-		storage:    NewEntryHashTable(),
-		sigRefresh: signal,
+		storage:     NewEntryHashTable(),
+		fzfDelegate: NewFzfDelegate(cfg),
+		sigRefresh:  signal,
 	}
 	p.cond = *sync.NewCond(&p.mutex)
 	return p
@@ -63,7 +65,7 @@ func (p *EntryManager) LoadEntries(loaders ...func(chan *Entry)) tea.Cmd {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func emit(signal SigRefresh, entries []EntryNode) {
+func emit(signal SigRefresh, entries IEntryLinkedList) {
 	select {
 	case signal <- RefreshedMsg{entries}:
 	default:
@@ -82,12 +84,10 @@ func (p *EntryManager) appendEntry(entryChan chan *Entry) {
 		return p.state != Filtering
 	}
 
-	nodes := []EntryNode{}
 	for entry := range entryChan {
-		p.storage.emplace(entry)
+		p.storage.emplace_back(entry)
 		if shouldEmit() {
-			nodes = append(nodes, entry)
-			emit(p.sigRefresh, nodes)
+			emit(p.sigRefresh, p.storage)
 		}
 	}
 
@@ -121,23 +121,25 @@ func (p *EntryManager) FilterEntry(query string) tea.Cmd {
 		}
 		p.state = Filtering
 	}
-	var nodes []EntryNode
-	filterFn := func(name string) {
+	var nodes IEntryLinkedList
+	foundFn := func(name string) {
 		for _, e := range p.storage.get(name) {
-			nodes = append(nodes, e)
+			nodes.push_back(e)
 		}
 		emit(p.sigRefresh, nodes)
 	}
 	return func() tea.Msg {
 		wait()
 
-		nodes = nil
+		nodes = NewEntryLinkedList()
+
 		if entry := loadCalculator(query); entry != nil {
-			nodes = append(nodes, entry)
+			nodes.emplace_back(entry)
 			emit(p.sigRefresh, nodes)
 			query = entry.name
 		}
-		p.fzfDelegate.Execute(query, filterFn, p.loopEntries)
+
+		p.filterSync(foundFn, query)
 
 		p.cond.L.Lock()
 		defer p.cond.L.Unlock()
@@ -152,25 +154,86 @@ func (p *EntryManager) FilterEntry(query string) tea.Cmd {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) loopEntries(stream FzfStream) {
-	wait := func() bool {
+func (p *EntryManager) filterSync(foundFn func(string), query string) {
+	p.fzfDelegate.ExecuteSync(query, foundFn, p.readSync())
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryManager) readSync() func(FzfStream) {
+	stopOrWait := func() bool {
 		p.cond.L.Lock()
 		defer p.cond.L.Unlock()
 
-		isStopped := p.state == Filtering
-		for isStopped && !p.dataPending && !p.dataReady {
+		isStopped := p.state != Filtering
+		for isStopped && !(p.dataPending || p.dataReady) {
 			p.cond.Wait()
-			isStopped = p.state == Filtering
+			isStopped = p.state != Filtering
 		}
 		if p.dataPending {
 			p.dataPending = false
 		}
 		return isStopped
 	}
-	for iter := p.storage.begin(); iter != nil; iter = iter.Next() {
-		stream <- iter.Value()
-		if !wait() {
-			break
+	return func(stream FzfStream) {
+		it := p.storage.begin()
+		for it != nil && !stopOrWait() {
+			stream <- it.Value()
+			it = it.Next()
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryManager) filterAsync(foundFn func(string), query string) {
+	routines := runtime.NumCPU() - 1
+	chunk := p.storage.len() / routines
+	workers := []*sync.WaitGroup{}
+	for i := range routines {
+		var end EntryNode = nil
+		if i < routines-1 {
+			end = p.storage.at(i*chunk + chunk)
+		}
+		workers = append(
+			workers,
+			p.fzfDelegate.ExecuteAsync(
+				query,
+				foundFn,
+				p.readAsync(p.storage.at(i*chunk), end)))
+	}
+	for _, worker := range workers {
+		worker.Wait()
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryManager) readAsync(start, end EntryNode) func(FzfStream) {
+	stop := func() bool {
+		p.cond.L.Lock()
+		defer p.cond.L.Unlock()
+
+		return p.state != Filtering
+	}
+	wait := func(skip bool) {
+		if skip {
+			return
+		}
+		p.cond.L.Lock()
+		defer p.cond.L.Unlock()
+
+		for !p.dataPending && !p.dataReady {
+			p.cond.Wait()
+		}
+		if p.dataPending {
+			p.dataPending = false
+		}
+	}
+	return func(s FzfStream) {
+		for it := start; it != end && !stop(); it = it.Next() {
+			s <- it.Value()
+			wait(end != nil)
 		}
 	}
 }

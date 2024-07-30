@@ -9,15 +9,15 @@ import (
 
 func TestEntryHashTable(t *testing.T) {
 	table := EntryHashTable{
-		hash:    hash(),
-		storage: make(map[uint32][]EntryNode),
+		hash:  hash(),
+		table: make(map[uint32][]EntryNode),
 	}
 	var p IEntryHashTable = &table
 
 	var wg sync.WaitGroup
 	fn := func(start, end int64) {
 		for i := start; i < end; i++ {
-			p.emplace(&Entry{name: strconv.FormatInt(i, 10)})
+			p.emplace_back(&Entry{name: strconv.FormatInt(i, 10)})
 		}
 		wg.Done()
 	}
@@ -28,8 +28,8 @@ func TestEntryHashTable(t *testing.T) {
 	go fn(0, 10)
 	wg.Wait()
 
-	if len(table.storage) != 10 {
-		t.Errorf(`0: Expected len %d got %d`, 10, len(table.storage))
+	if len(table.table) != 10 {
+		t.Errorf(`0: Expected len %d got %d`, 10, len(table.table))
 	}
 
 	entries := p.get("3")
@@ -68,7 +68,7 @@ func TestEntryTraverse(t *testing.T) {
 	var wg sync.WaitGroup
 	fn := func(start, end int64) {
 		for i := start; i < end; i++ {
-			p.emplace(&Entry{name: strconv.FormatInt(i, 10)})
+			p.emplace_back(&Entry{name: strconv.FormatInt(i, 10)})
 		}
 		wg.Done()
 	}
