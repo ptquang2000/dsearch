@@ -65,9 +65,9 @@ func (p *EntryManager) LoadEntries(loaders ...func(chan *Entry)) tea.Cmd {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func emit(signal SigRefresh, entries IEntryLinkedList) {
+func emit(signal SigRefresh, nodes []EntryNode) {
 	select {
-	case signal <- RefreshedMsg{entries}:
+	case signal <- RefreshedMsg{nodes}:
 	default:
 	}
 }
@@ -85,9 +85,9 @@ func (p *EntryManager) appendEntry(entryChan chan *Entry) {
 	}
 
 	for entry := range entryChan {
-		p.storage.emplace_back(entry)
+		p.storage.emplace(entry)
 		if shouldEmit() {
-			emit(p.sigRefresh, p.storage)
+			emit(p.sigRefresh, p.storage.getRawData())
 		}
 	}
 
@@ -121,47 +121,37 @@ func (p *EntryManager) FilterEntry(query string) tea.Cmd {
 		}
 		p.state = Filtering
 	}
-	var nodes IEntryLinkedList
-	foundFn := func(name string) {
-		for _, e := range p.storage.get(name) {
-			nodes.push_back(e)
-		}
-		emit(p.sigRefresh, nodes)
-	}
 	return func() tea.Msg {
 		wait()
 
-		nodes = NewEntryLinkedList()
-
 		if entry := loadCalculator(query); entry != nil {
-			nodes.emplace_back(entry)
-			emit(p.sigRefresh, nodes)
+			p.storage.emplace(entry)
 			query = entry.name
 		}
 
-		p.filterAsync(foundFn, query)
+		results := p.storage.transform(p.filterAsync(query))
 
 		p.cond.L.Lock()
 		defer p.cond.L.Unlock()
 		if p.state == Filtering {
 			p.state = Filtered
-			return FilteredMsg{nodes}
+			return FilteredMsg{results}
 		}
 		p.state = Stopped
-		return StoppedMsg{nodes}
+		return StoppedMsg{results}
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 func (p *EntryManager) filterSync(foundFn func(string), query string) {
-	p.fzfDelegate.ExecuteSync(query, foundFn, p.readSync())
+	p.fzfDelegate.ExecuteSync(query, foundFn, p.readSync(0))
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) readSync() func(FzfStream) {
-	stopOrWait := func() bool {
+func (p *EntryManager) readSync(start int) func(FzfStream) {
+	isStopped := func() bool {
 		p.cond.L.Lock()
 		defer p.cond.L.Unlock()
 
@@ -176,65 +166,58 @@ func (p *EntryManager) readSync() func(FzfStream) {
 		return isStopped
 	}
 	return func(stream FzfStream) {
-		it := p.storage.begin()
-		for it != nil && !stopOrWait() {
-			stream <- it.Value()
-			it = it.Next()
-		}
+		p.storage.traverse(start, func(val string) bool {
+			stream <- val
+			return !isStopped()
+		})
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) filterAsync(foundFn func(string), query string) {
+func (p *EntryManager) filterAsync(query string) []string {
 	routines := runtime.NumCPU() - 1
 	chunk := p.storage.len() / routines
 	workers := []*sync.WaitGroup{}
+	strs := []string{}
+	var mutex sync.Mutex
+	foundFn := func(str string) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		strs = append(strs, str)
+		emit(p.sigRefresh, p.storage.transform(strs))
+	}
 	for i := range routines {
-		var end EntryNode = nil
+		var readFn func(FzfStream)
 		if i < routines-1 {
-			end = p.storage.at(i*chunk + chunk)
+			readFn = p.readAsync(i*chunk, i*chunk+chunk)
+		} else {
+			readFn = p.readSync(i * chunk)
 		}
 		workers = append(
 			workers,
-			p.fzfDelegate.ExecuteAsync(
-				query,
-				foundFn,
-				p.readAsync(p.storage.at(i*chunk), end)))
+			p.fzfDelegate.ExecuteAsync(query, foundFn, readFn))
 	}
 	for _, worker := range workers {
 		worker.Wait()
 	}
+	return strs
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) readAsync(start, end EntryNode) func(FzfStream) {
-	stop := func() bool {
+func (p *EntryManager) readAsync(start, end int) func(FzfStream) {
+	isStopped := func() bool {
 		p.cond.L.Lock()
 		defer p.cond.L.Unlock()
 
 		return p.state != Filtering
 	}
-	wait := func(skip bool) {
-		if skip {
-			return
-		}
-		p.cond.L.Lock()
-		defer p.cond.L.Unlock()
-
-		for !p.dataPending && !p.dataReady {
-			p.cond.Wait()
-		}
-		if p.dataPending {
-			p.dataPending = false
-		}
-	}
-	return func(s FzfStream) {
-		for it := start; it != end && !stop(); it = it.Next() {
-			s <- it.Value()
-			wait(end != nil)
-		}
+	return func(stream FzfStream) {
+		p.storage.forEach(start, end, func(s string) bool {
+			stream <- s
+			return !isStopped()
+		})
 	}
 }
 

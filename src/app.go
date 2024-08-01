@@ -25,14 +25,14 @@ type model struct {
 	textInput textinput.Model
 
 	refreshCon SigRefresh
-	nodes      IEntryLinkedList
+	nodes      []EntryNode
 	cursor     int
 }
 
 type LoadedMsg struct{}
-type RefreshedMsg struct{ nodes IEntryLinkedList }
-type FilteredMsg struct{ nodes IEntryLinkedList }
-type StoppedMsg struct{ nodes IEntryLinkedList }
+type RefreshedMsg struct{ nodes []EntryNode }
+type FilteredMsg struct{ nodes []EntryNode }
+type StoppedMsg struct{ nodes []EntryNode }
 type SelectedMsg struct{ entry EntryNode }
 type QueryMsg struct{ query string }
 
@@ -106,7 +106,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case RefreshedMsg:
 		m.nodes = msg.nodes
-		m.cursor = max(min(m.cursor, m.nodes.len()-1), 0)
+		m.updateCursor()
 		return m, onViewRefreshed(m.refreshCon)
 	case LoadedMsg:
 		log.Printf(`Finished to load all entries`)
@@ -117,12 +117,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FilteredMsg:
 		log.Printf(`Finished to filter query`)
 		m.nodes = msg.nodes
-		m.cursor = max(min(m.cursor, m.nodes.len()-1), 0)
+		m.updateCursor()
 		return m, onViewRefreshed(m.refreshCon)
 	case StoppedMsg:
 		log.Printf(`Filter execution was stopped`)
 		m.nodes = msg.nodes
-		m.cursor = max(min(m.cursor, m.nodes.len()-1), 0)
+		m.updateCursor()
 		return m, onViewRefreshed(m.refreshCon)
 	case SelectedMsg:
 		name := msg.entry.Value()
@@ -133,6 +133,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf(`Uknown update |%s|`, msg)
 	}
 	return m, nil
+}
+
+func (m *model) updateCursor() {
+	m.cursor = max(min(m.cursor, len(m.nodes)-1), 0)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -189,9 +193,9 @@ func (m *model) onKeyChanged(key tea.KeyType) tea.Cmd {
 		m.cursor = max(m.cursor, 0)
 	case tea.KeyDown, tea.KeyCtrlN:
 		m.cursor++
-		m.cursor = min(m.cursor, m.nodes.len()-1)
+		m.cursor = min(m.cursor, len(m.nodes)-1)
 	case tea.KeyEnter:
-		return onSelectedEntry(m.nodes.at(m.cursor))
+		return onSelectedEntry(m.nodes[m.cursor])
 	default:
 		log.Printf(`Received keys: |%s|`, key)
 	}
@@ -205,7 +209,7 @@ func onSelectedEntry(entry EntryNode) tea.Cmd {
 ///////////////////////////////////////////////////////////////////////////////
 
 func (m *model) View() string {
-	if !m.ready || m.nodes == nil {
+	if !m.ready {
 		return "\n Inializing ..."
 	}
 
@@ -217,8 +221,7 @@ func (m *model) View() string {
 	start := max(0, m.cursor+1-limit)
 	end := max(limit, m.cursor+1)
 
-	count := m.nodes.len()
-	for i := start; i < count && i < end; i++ {
+	for i := start; i < len(m.nodes) && i < end; i++ {
 		cursor := " "
 		if m.cursor == i {
 			cursor = ">"
@@ -226,7 +229,7 @@ func (m *model) View() string {
 		sb.WriteString(fmt.Sprintf(
 			"\n %s %s",
 			cursor,
-			m.nodes.at(i).Value()))
+			m.nodes[i].Value()))
 	}
 
 	sb.WriteString("\n\n Press Esc to quit.\n")

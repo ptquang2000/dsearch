@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"log"
 	"runtime/debug"
+	"slices"
 	"sync"
 )
 
@@ -13,13 +14,11 @@ import (
 type Entry struct {
 	name    string
 	execute func()
-	next    EntryNode
 }
 
 type EntryNode interface {
 	Value() string
 	Execute()
-	Next() EntryNode
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -38,45 +37,22 @@ func (p *Entry) Execute() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *Entry) Next() EntryNode {
-	return p.next
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-type IEntryLinkedList interface {
-	len() int
-	begin() EntryNode
-	end() EntryNode
-	at(int) EntryNode
-	emplace_back(*Entry)
-	push_back(EntryNode)
-}
-
-type EntryLinkedList struct {
-	mutex sync.Mutex
-	array []*Entry
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-func NewEntryLinkedList() IEntryLinkedList {
-	return new(EntryLinkedList)
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
 type hasher func(string) uint32
 
 type IEntryHashTable interface {
-	IEntryLinkedList
-	get(string) []EntryNode
+	traverse(start int, callback func(string) bool)
+	forEach(start, end int, callback func(string) bool)
+	transform(strs []string) []EntryNode
+	getRawData() []EntryNode
+	emplace(e *Entry)
+	len() int
 }
 
 type EntryHashTable struct {
-	EntryLinkedList
+	mutex sync.Mutex
+	array []EntryNode
 	hash  hasher
-	table map[uint32][]EntryNode
+	table map[uint32][]int
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -96,154 +72,90 @@ func hash() hasher {
 func NewEntryHashTable() IEntryHashTable {
 	return &EntryHashTable{
 		hash:  hash(),
-		table: make(map[uint32][]EntryNode),
+		table: make(map[uint32][]int),
 	}
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryHashTable) push_back(e EntryNode) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if e == nil {
-		debug.PrintStack()
-		log.Fatalf(`Cannot emplace nil entry`)
-	}
-
-	_e := &Entry{
-		name:    e.Value(),
-		execute: e.Execute,
-		next:    nil,
-	}
-	key := p.hash(_e.name)
-	p.table[key] = append(p.table[key], _e)
-
-	if len(p.array) > 0 {
-		p.array[len(p.array)-1].next = _e
-	}
-	p.array = append(p.array, _e)
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryHashTable) emplace_back(e *Entry) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if e == nil {
-		debug.PrintStack()
-		log.Fatalf(`Cannot emplace nil entry`)
-	}
-
-	key := p.hash(e.name)
-	p.table[key] = append(p.table[key], e)
-
-	if len(p.array) > 0 {
-		p.array[len(p.array)-1].next = e
-	}
-	p.array = append(p.array, e)
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryLinkedList) push_back(e EntryNode) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if e == nil {
-		debug.PrintStack()
-		log.Fatalf(`Cannot emplace nil entry`)
-	}
-
-	_e := &Entry{
-		name:    e.Value(),
-		execute: e.Execute,
-		next:    nil,
-	}
-	if len(p.array) > 0 {
-		p.array[len(p.array)-1].next = _e
-	}
-	p.array = append(p.array, _e)
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryLinkedList) emplace_back(e *Entry) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if e == nil {
-		debug.PrintStack()
-		log.Fatalf(`Cannot emplace nil entry`)
-	}
-
-	if len(p.array) > 0 {
-		p.array[len(p.array)-1].next = e
-	}
-	p.array = append(p.array, e)
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryHashTable) get(s string) []EntryNode {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	key := p.hash(s)
-	table, ok := p.table[key]
-	if !ok {
-		debug.PrintStack()
-		log.Fatalf(`Key %d not found in storage`, key)
-	}
-	return table
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryLinkedList) begin() EntryNode {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if len(p.array) == 0 {
-		debug.PrintStack()
-		log.Fatalf(`Index %d out of range %d`, 0, len(p.array))
-	}
-	return p.array[0]
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryLinkedList) end() EntryNode {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if len(p.array) == 0 {
-		debug.PrintStack()
-		log.Fatalf(`Index %d out of range %d`, 0, len(p.array))
-	}
-	return p.array[len(p.array)-1]
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func (p *EntryLinkedList) len() int {
+func (p *EntryHashTable) len() int {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	return len(p.array)
 }
 
-////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryLinkedList) at(i int) EntryNode {
+func (p *EntryHashTable) getRawData() []EntryNode {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return p.array
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryHashTable) emplace(e *Entry) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	if i >= len(p.array) {
+	if e == nil {
 		debug.PrintStack()
-		log.Fatalf(`Index %d out of range %d`, i, len(p.array))
+		log.Fatalf(`Cannot emplace nil entry`)
 	}
-	return p.array[i]
+
+	key := p.hash(e.Value())
+	if indexes, ok := p.table[key]; !ok {
+		p.table[key] = append(p.table[key], len(p.array))
+	} else if !slices.ContainsFunc(indexes, func(i int) bool {
+		return p.array[i].Value() == e.Value()
+	}) {
+		p.table[key] = append(p.table[key], len(p.array))
+	} else {
+		return
+	}
+	p.array = append(p.array, e)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryHashTable) transform(strs []string) []EntryNode {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	var indexes []int
+	for _, str := range strs {
+		key := p.hash(str)
+		if i, ok := p.table[key]; ok {
+			indexes = append(indexes, i...)
+		} else {
+			debug.PrintStack()
+			log.Fatalf(`Key %d not found in storage`, key)
+		}
+	}
+	slices.Sort(indexes)
+	var nodes []EntryNode
+	for _, idx := range indexes {
+		nodes = append(nodes, p.array[idx])
+	}
+	return nodes
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryHashTable) forEach(start, end int, callback func(string) bool) {
+	for i := start; i < end; i++ {
+		if !callback(p.array[i].Value()) {
+			break
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (p *EntryHashTable) traverse(start int, callback func(string) bool) {
+	for i := start; i < p.len(); i++ {
+		if !callback(p.array[i].Value()) {
+			break
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////

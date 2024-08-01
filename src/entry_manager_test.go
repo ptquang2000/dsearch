@@ -2,6 +2,7 @@ package dsearch
 
 import (
 	"math/rand"
+	"reflect"
 	"slices"
 	"strconv"
 	"sync"
@@ -57,13 +58,10 @@ func BenchmarkFilterEntry(b *testing.B) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func extract(nodes IEntryLinkedList) []string {
+func extract(nodes []EntryNode) []string {
 	var result []string
-	if nodes.len() == 0 {
-		return result
-	}
-	for it := nodes.begin(); it != nil; it = it.Next() {
-		result = append(result, it.Value())
+	for _, node := range nodes {
+		result = append(result, node.Value())
 	}
 	return result
 }
@@ -100,8 +98,6 @@ func TestFilterEntry(t *testing.T) {
 		"742069_",
 		"842069_",
 		"942069_"}
-	slices.Sort(expected)
-	slices.Sort(result)
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
@@ -241,8 +237,6 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 		"86969_",
 		"96969_",
 	}
-	slices.Sort(expected)
-	slices.Sort(result)
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
@@ -267,7 +261,7 @@ func TestStopFilter(t *testing.T) {
 		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
 			t.Errorf(`Expected FilteredMsg got %v`, msg)
 		} else {
-			return msg.nodes.len()
+			return len(msg.nodes)
 		}
 		return 0
 	}
@@ -297,7 +291,8 @@ func TestStopFilter(t *testing.T) {
 	}
 	expectStop := func(s string) {
 		if msg, ok := m.FilterEntry(s)().(StoppedMsg); !ok {
-			t.Errorf(`Expected StoppedMsg got %v`, msg)
+			t.Errorf(`Expected StoppedMsg got %v`,
+				reflect.TypeOf(msg))
 		}
 	}
 	for i := 0; i < 10; i++ {
