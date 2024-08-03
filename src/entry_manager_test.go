@@ -19,6 +19,8 @@ func BenchmarkLoadEntries(b *testing.B) {
 	// BenchmarkLoadEntries-16		100         950366550 ns/op
 	// commit 92d80fc1194da079556b44c0e62a0939ba195231
 	// BenchmarkLoadEntries-16              100         918217414 ns/op
+	// commit 115624de830ea73ed931c8ae3bbf5ab4964ac85a
+	// BenchmarkLoadEntries-16              100         463195134 ns/op
 	for i := 0; i < b.N; i++ {
 		m := NewEntryManager(nil, FzfConfig{true, true, 0})
 		m.LoadEntries(
@@ -42,6 +44,8 @@ func BenchmarkFilterEntry(b *testing.B) {
 	// BenchmarkFilterEntry-16              100         444117061 ns/op
 	// commit 2bc250b3d1239c8fcc85b4a046b39056cf3f884e
 	// BenchmarkFilterEntry-16              100         256185131 ns/op
+	// commit 115624de830ea73ed931c8ae3bbf5ab4964ac85a
+	// BenchmarkFilterEntry-16              100         221225735 ns/op
 
 	m := NewEntryManager(nil, FzfConfig{true, true, 0})
 	m.LoadEntries(func(entryChan chan *Entry) {
