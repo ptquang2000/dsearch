@@ -2,10 +2,10 @@ package dsearch
 
 import (
 	"math/rand"
-	"reflect"
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -24,7 +24,7 @@ func BenchmarkLoadEntries(b *testing.B) {
 		m.LoadEntries(
 			func(c chan *Entry) { loadApplications(c) },
 			func(c chan *Entry) { loadFiles(c, true) },
-		)()
+		)
 	}
 }
 
@@ -49,10 +49,10 @@ func BenchmarkFilterEntry(b *testing.B) {
 			entryChan <- &Entry{
 				name: strconv.FormatUint(i, 10) + "_"}
 		}
-	})()
+	})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		m.FilterEntry("999999_")()
+		m.FilterEntry("999999_")
 	}
 }
 
@@ -77,16 +77,9 @@ func TestFilterEntry(t *testing.T) {
 				name: strconv.FormatUint(i, 10) + "_"}
 		}
 	}
-	m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	m.LoadEntries(loadDummies)
 
-	filterEntry("42069_")
+	result = extract(m.FilterEntry("42069_"))
 	expected = []string{
 		"42069_",
 		"142069_",
@@ -102,13 +95,13 @@ func TestFilterEntry(t *testing.T) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
 
-	filterEntry("999999_")
+	result = extract(m.FilterEntry("999999_"))
 	expected = []string{"999999_"}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
 
-	filterEntry("xxxxxx_")
+	result = extract(m.FilterEntry("xxxxxx_"))
 	expected = []string{}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
@@ -136,17 +129,10 @@ func TestFilterEntryBeforeDataReadyCase1(t *testing.T) {
 	}
 	fin.Add(1)
 	wg.Add(1)
-	go m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	go m.LoadEntries(loadDummies)
 
 	wg.Wait()
-	filterEntry("69420_")
+	result = extract(m.FilterEntry("69420_"))
 	expected = []string{"69420_"}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
@@ -175,17 +161,10 @@ func TestFilterEntryBeforeDataReadyCase2(t *testing.T) {
 	}
 	fin.Add(1)
 	wg.Add(1)
-	go m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	go m.LoadEntries(loadDummies)
 
 	wg.Wait()
-	filterEntry("42069_")
+	result = extract(m.FilterEntry("42069_"))
 	expected = []string{"42069_"}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
@@ -214,17 +193,10 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 	}
 	fin.Add(1)
 	wg.Add(1)
-	go m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	go m.LoadEntries(loadDummies)
 
 	wg.Wait()
-	filterEntry("6969_")
+	result = extract(m.FilterEntry("6969_"))
 	expected = []string{
 		"6969_",
 		"16969_",
@@ -255,18 +227,10 @@ func TestStopFilter(t *testing.T) {
 				name: strconv.FormatUint(i, 10) + "_"}
 		}
 	}
-	m.LoadEntries(loadDummies)()
+	m.LoadEntries(loadDummies)
 
-	expectFin := func(s string) int {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		} else {
-			return len(msg.nodes)
-		}
-		return 0
-	}
 	query := "69_"
-	length := expectFin(query)
+	length := len(m.FilterEntry(query))
 
 	stopFilter := func() {
 		fin.Add(1)
@@ -289,18 +253,97 @@ func TestStopFilter(t *testing.T) {
 		}
 		t.Errorf(`Should not be stopped by closed chan`)
 	}
-	expectStop := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(StoppedMsg); !ok {
-			t.Errorf(`Expected StoppedMsg got %v`,
-				reflect.TypeOf(msg))
-		}
-	}
 	for i := 0; i < 10; i++ {
 		go stopFilter()
-		expectStop(query)
+		m.FilterEntry(query)
 	}
 
-	expectFin(query)
+	m.FilterEntry(query)
 	close(refreshCon)
 	fin.Wait()
 }
+
+///////////////////////////////////////////////////////////////////////////////
+
+func TestSynchronizeFilterEntry(t *testing.T) {
+	var fin sync.WaitGroup
+	m := NewEntryManager(nil, FzfConfig{true, true, 0})
+	loadDummies := func(entryChan chan *Entry) {
+		for i := uint64(0); i < 100000; i++ {
+			entryChan <- &Entry{
+				name: strconv.FormatUint(i, 10) + "_"}
+		}
+	}
+	m.LoadEntries(loadDummies)
+
+	query := "420_"
+	length := len(m.FilterEntry(query))
+	times := 10
+
+	result := 0
+	filter := func() {
+		result += len(m.FilterEntry(query))
+		fin.Done()
+	}
+	for i := 0; i < times; i++ {
+		fin.Add(1)
+		go filter()
+	}
+
+	fin.Wait()
+	expected := length * times
+	if expected != result {
+		t.Errorf(`Expected %d got %d`, expected, result)
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func TestSynchronizeStopThenFilter(t *testing.T) {
+	var fin sync.WaitGroup
+	refreshCon := make(SigRefresh)
+	m := NewEntryManager(refreshCon, FzfConfig{true, true, 0})
+	loadDummies := func(entryChan chan *Entry) {
+		for i := uint64(0); i < 1000000; i++ {
+			entryChan <- &Entry{
+				name: strconv.FormatUint(i, 10) + "_"}
+		}
+	}
+	m.LoadEntries(loadDummies)
+
+	var nums atomic.Int32
+	query, result := "420_", 0
+	expected := len(m.FilterEntry(query))
+	half := expected / 2
+	nums.Store(10)
+	stopThenFilter := func() {
+		nums.Add(-1)
+		if nums.Load() == 1 && result != expected {
+			t.Errorf(`Expected %d got %d`, expected, result)
+			return
+		}
+		m.StopFilter()
+		result = len(m.FilterEntry(query))
+		if result < half {
+			t.Errorf(`Expected >=%d got %d`, half, result)
+		}
+	}
+	go func() {
+		defer fin.Done()
+		fin.Add(1)
+		count := 0
+		for range refreshCon {
+			count += 1
+			if nums.Load() > 1 && count >= rand.Intn(half) {
+				count = 0
+				go stopThenFilter()
+			}
+		}
+	}()
+	go stopThenFilter()
+
+	close(refreshCon)
+	fin.Wait()
+}
+
+///////////////////////////////////////////////////////////////////////////////
