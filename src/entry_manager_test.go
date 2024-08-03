@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -18,12 +19,14 @@ func BenchmarkLoadEntries(b *testing.B) {
 	// BenchmarkLoadEntries-16		100         950366550 ns/op
 	// commit 92d80fc1194da079556b44c0e62a0939ba195231
 	// BenchmarkLoadEntries-16              100         918217414 ns/op
+	// commit 115624de830ea73ed931c8ae3bbf5ab4964ac85a
+	// BenchmarkLoadEntries-16              100         463195134 ns/op
 	for i := 0; i < b.N; i++ {
 		m := NewEntryManager(nil, FzfConfig{true, true, 0})
 		m.LoadEntries(
 			func(c chan *Entry) { loadApplications(c) },
 			func(c chan *Entry) { loadFiles(c, true) },
-		)()
+		)
 	}
 }
 
@@ -41,6 +44,8 @@ func BenchmarkFilterEntry(b *testing.B) {
 	// BenchmarkFilterEntry-16              100         444117061 ns/op
 	// commit 2bc250b3d1239c8fcc85b4a046b39056cf3f884e
 	// BenchmarkFilterEntry-16              100         256185131 ns/op
+	// commit 115624de830ea73ed931c8ae3bbf5ab4964ac85a
+	// BenchmarkFilterEntry-16              100         221225735 ns/op
 
 	m := NewEntryManager(nil, FzfConfig{true, true, 0})
 	m.LoadEntries(func(entryChan chan *Entry) {
@@ -48,22 +53,19 @@ func BenchmarkFilterEntry(b *testing.B) {
 			entryChan <- &Entry{
 				name: strconv.FormatUint(i, 10) + "_"}
 		}
-	})()
+	})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		m.FilterEntry("999999_")()
+		m.FilterEntry("999999_")
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func extract(nodes IEntryLinkedList) []string {
+func extract(nodes []EntryNode) []string {
 	var result []string
-	if nodes.len() == 0 {
-		return result
-	}
-	for it := nodes.begin(); it != nil; it = it.Next() {
-		result = append(result, it.Value())
+	for _, node := range nodes {
+		result = append(result, node.Value())
 	}
 	return result
 }
@@ -79,16 +81,9 @@ func TestFilterEntry(t *testing.T) {
 				name: strconv.FormatUint(i, 10) + "_"}
 		}
 	}
-	m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	m.LoadEntries(loadDummies)
 
-	filterEntry("42069_")
+	result = extract(m.FilterEntry("42069_"))
 	expected = []string{
 		"42069_",
 		"142069_",
@@ -100,19 +95,17 @@ func TestFilterEntry(t *testing.T) {
 		"742069_",
 		"842069_",
 		"942069_"}
-	slices.Sort(expected)
-	slices.Sort(result)
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
 
-	filterEntry("999999_")
+	result = extract(m.FilterEntry("999999_"))
 	expected = []string{"999999_"}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
 
-	filterEntry("xxxxxx_")
+	result = extract(m.FilterEntry("xxxxxx_"))
 	expected = []string{}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
@@ -140,17 +133,10 @@ func TestFilterEntryBeforeDataReadyCase1(t *testing.T) {
 	}
 	fin.Add(1)
 	wg.Add(1)
-	go m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	go m.LoadEntries(loadDummies)
 
 	wg.Wait()
-	filterEntry("69420_")
+	result = extract(m.FilterEntry("69420_"))
 	expected = []string{"69420_"}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
@@ -179,17 +165,10 @@ func TestFilterEntryBeforeDataReadyCase2(t *testing.T) {
 	}
 	fin.Add(1)
 	wg.Add(1)
-	go m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	go m.LoadEntries(loadDummies)
 
 	wg.Wait()
-	filterEntry("42069_")
+	result = extract(m.FilterEntry("42069_"))
 	expected = []string{"42069_"}
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
@@ -218,17 +197,10 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 	}
 	fin.Add(1)
 	wg.Add(1)
-	go m.LoadEntries(loadDummies)()
-	filterEntry := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); ok {
-			result = extract(msg.nodes)
-		} else {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		}
-	}
+	go m.LoadEntries(loadDummies)
 
 	wg.Wait()
-	filterEntry("6969_")
+	result = extract(m.FilterEntry("6969_"))
 	expected = []string{
 		"6969_",
 		"16969_",
@@ -241,8 +213,6 @@ func TestFilterEntryBeforeDataReadyCase3(t *testing.T) {
 		"86969_",
 		"96969_",
 	}
-	slices.Sort(expected)
-	slices.Sort(result)
 	if !slices.Equal(expected, result) {
 		t.Errorf(`Expected %v got %v`, expected, result)
 	}
@@ -261,18 +231,10 @@ func TestStopFilter(t *testing.T) {
 				name: strconv.FormatUint(i, 10) + "_"}
 		}
 	}
-	m.LoadEntries(loadDummies)()
+	m.LoadEntries(loadDummies)
 
-	expectFin := func(s string) int {
-		if msg, ok := m.FilterEntry(s)().(FilteredMsg); !ok {
-			t.Errorf(`Expected FilteredMsg got %v`, msg)
-		} else {
-			return msg.nodes.len()
-		}
-		return 0
-	}
 	query := "69_"
-	length := expectFin(query)
+	length := len(m.FilterEntry(query))
 
 	stopFilter := func() {
 		fin.Add(1)
@@ -295,17 +257,97 @@ func TestStopFilter(t *testing.T) {
 		}
 		t.Errorf(`Should not be stopped by closed chan`)
 	}
-	expectStop := func(s string) {
-		if msg, ok := m.FilterEntry(s)().(StoppedMsg); !ok {
-			t.Errorf(`Expected StoppedMsg got %v`, msg)
-		}
-	}
 	for i := 0; i < 10; i++ {
 		go stopFilter()
-		expectStop(query)
+		m.FilterEntry(query)
 	}
 
-	expectFin(query)
+	m.FilterEntry(query)
 	close(refreshCon)
 	fin.Wait()
 }
+
+///////////////////////////////////////////////////////////////////////////////
+
+func TestSynchronizeFilterEntry(t *testing.T) {
+	var fin sync.WaitGroup
+	m := NewEntryManager(nil, FzfConfig{true, true, 0})
+	loadDummies := func(entryChan chan *Entry) {
+		for i := uint64(0); i < 100000; i++ {
+			entryChan <- &Entry{
+				name: strconv.FormatUint(i, 10) + "_"}
+		}
+	}
+	m.LoadEntries(loadDummies)
+
+	query := "420_"
+	length := len(m.FilterEntry(query))
+	times := 10
+
+	result := 0
+	filter := func() {
+		result += len(m.FilterEntry(query))
+		fin.Done()
+	}
+	for i := 0; i < times; i++ {
+		fin.Add(1)
+		go filter()
+	}
+
+	fin.Wait()
+	expected := length * times
+	if expected != result {
+		t.Errorf(`Expected %d got %d`, expected, result)
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func TestSynchronizeStopThenFilter(t *testing.T) {
+	var fin sync.WaitGroup
+	refreshCon := make(SigRefresh)
+	m := NewEntryManager(refreshCon, FzfConfig{true, true, 0})
+	loadDummies := func(entryChan chan *Entry) {
+		for i := uint64(0); i < 1000000; i++ {
+			entryChan <- &Entry{
+				name: strconv.FormatUint(i, 10) + "_"}
+		}
+	}
+	m.LoadEntries(loadDummies)
+
+	var nums atomic.Int32
+	query, result := "420_", 0
+	expected := len(m.FilterEntry(query))
+	half := expected / 2
+	nums.Store(10)
+	stopThenFilter := func() {
+		nums.Add(-1)
+		if nums.Load() == 1 && result != expected {
+			t.Errorf(`Expected %d got %d`, expected, result)
+			return
+		}
+		m.StopFilter()
+		result = len(m.FilterEntry(query))
+		if result < half {
+			t.Errorf(`Expected >=%d got %d`, half, result)
+		}
+	}
+	go func() {
+		defer fin.Done()
+		fin.Add(1)
+		count := 0
+		for range refreshCon {
+			count += 1
+			if nums.Load() > 1 && count >= rand.Intn(half) {
+				count = 0
+				go stopThenFilter()
+			}
+		}
+	}()
+	go stopThenFilter()
+
+	close(refreshCon)
+	fin.Wait()
+}
+
+///////////////////////////////////////////////////////////////////////////////
