@@ -124,33 +124,34 @@ func (p *EntryManager) FilterEntry(query string) []EntryNode {
 		query = entry.name
 	}
 
-	return p.storage.transform(p.filterSync(query))
+	return p.storage.transform(*p.filterAsync(query))
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) filterSync(query string) []string {
+func (p *EntryManager) filterSync(query string) *[]string {
 	var strs []string
 	foundFn := func(str string) {
 		strs = append(strs, str)
 		emit(p.sigRefresh, p.storage.transform(strs))
 	}
 	p.fzfDelegate.ExecuteSync(query, foundFn, p.readSync(0))
-	return strs
+	return &strs
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) filterAsync(query string) []string {
+func (p *EntryManager) filterAsync(query string) *[]string {
 	var workers []*sync.WaitGroup
+	var strs []string
+	var mutex sync.Mutex
+
 	defer func() {
 		for _, worker := range workers {
 			worker.Wait()
 		}
 	}()
 
-	var strs []string
-	var mutex sync.Mutex
 	foundFn := func(str string) {
 		mutex.Lock()
 		defer mutex.Unlock()
@@ -171,7 +172,7 @@ func (p *EntryManager) filterAsync(query string) []string {
 			workers,
 			p.fzfDelegate.ExecuteAsync(query, foundFn, readFn))
 	}
-	return strs
+	return &strs
 }
 
 ///////////////////////////////////////////////////////////////////////////////
