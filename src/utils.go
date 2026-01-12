@@ -42,7 +42,7 @@ func loadCalculator(expr string) *Entry {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func loadApplications(entryChan chan *Entry) {
+func loadApplications(entryChan SigEntry) {
 	for _, dir := range desktop.DataDirs() {
 		walkDataDir(dir, entryChan)
 	}
@@ -50,7 +50,7 @@ func loadApplications(entryChan chan *Entry) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func walkDataDir(root string, entryChan chan *Entry) {
+func walkDataDir(root string, entryChan SigEntry) {
 	fn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			log.Printf(`Error during walking %s: %v\n`, path, err)
@@ -74,7 +74,7 @@ func walkDataDir(root string, entryChan chan *Entry) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func parseDesktopFile(path string, entryChan chan *Entry) {
+func parseDesktopFile(path string, entryChan SigEntry) {
 	parts := strings.Split(path, ".")
 	if len(parts) < 2 || parts[len(parts)-1] != "desktop" {
 		return

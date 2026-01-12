@@ -7,23 +7,6 @@ import (
 
 ///////////////////////////////////////////////////////////////////////////////
 
-type IEntryManager interface {
-	LoadEntries(...func(chan *Entry))
-	FilterEntry(string) []EntryNode
-	StopFilter()
-}
-
-type EntryManager struct {
-	storage     IEntryHashTable
-	fzfDelegate IFzfDelegate
-	mutex       sync.Mutex
-	cond        sync.Cond
-	dataReady   bool
-	dataPending bool
-	state       FilterState
-	sigRefresh  SigRefresh
-}
-
 type FilterState int32
 
 const (
@@ -34,11 +17,34 @@ const (
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func NewEntryManager(signal SigRefresh, cfg FzfConfig) IEntryManager {
+type IEntryManager interface {
+	LoadEntries(SigLoad, ...func(SigEntry)) int
+	FilterEntry(SigRefresh, string) []EntryNode
+	StopFilter(bool)
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+type EntryManager struct {
+	storage     IEntryHashTable
+	fzfDelegate IFzfDelegate
+	mutex       sync.Mutex
+	cond        sync.Cond
+	dataReady   bool
+	dataPending bool
+	state       FilterState
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+const k_chunkSize = 1000
+
+///////////////////////////////////////////////////////////////////////////////
+
+func NewEntryManager(cfg FzfConfig) IEntryManager {
 	p := &EntryManager{
 		storage:     NewEntryHashTable(),
 		fzfDelegate: NewFzfDelegate(cfg),
-		sigRefresh:  signal,
 		state:       Stopped,
 	}
 	p.cond = *sync.NewCond(&p.mutex)
@@ -47,41 +53,41 @@ func NewEntryManager(signal SigRefresh, cfg FzfConfig) IEntryManager {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) LoadEntries(loaders ...func(chan *Entry)) {
-	entryChan := make(chan *Entry)
+func (p *EntryManager) LoadEntries(s SigLoad, cbs ...func(SigEntry)) int {
+	entryChan := make(SigEntry)
 	defer close(entryChan)
 
-	go p.appendEntry(entryChan)
-	for _, loader := range loaders {
+	go p.appendEntry(s, entryChan)
+	for _, loader := range cbs {
 		loader(entryChan)
 	}
+	return p.storage.len()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func emit(signal SigRefresh, nodes []EntryNode) {
+func emit[T any](signal chan T, param T) {
 	select {
-	case signal <- RefreshedMsg{nodes}:
+	case signal <- param:
 	default:
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) appendEntry(entryChan chan *Entry) {
-	shouldEmit := func() bool {
-		p.cond.L.Lock()
-		defer p.cond.L.Unlock()
-		defer p.cond.Signal()
-
-		p.dataPending = true
-		return p.state != Filtering
-	}
-
-	for entry := range entryChan {
+func (p *EntryManager) appendEntry(s1 SigLoad, s2 SigEntry) {
+	count := 0
+	for entry := range s2 {
 		p.storage.emplace(entry)
-		if shouldEmit() {
-			emit(p.sigRefresh, p.storage.getRawData())
+
+		p.cond.L.Lock()
+		p.dataPending = true
+		p.cond.Signal()
+		p.cond.L.Unlock()
+
+		count += 1
+		if count%k_chunkSize == 0 {
+			emit(s1, LoadedMsg{count})
 		}
 	}
 
@@ -93,18 +99,21 @@ func (p *EntryManager) appendEntry(entryChan chan *Entry) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) StopFilter() {
+func (p *EntryManager) StopFilter(wait bool) {
 	p.cond.L.Lock()
 	if p.state == Filtering {
 		p.state = Stopping
 		p.cond.Broadcast()
+	}
+	for wait && p.state != Stopped {
+		p.cond.Wait()
 	}
 	p.cond.L.Unlock()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) FilterEntry(query string) []EntryNode {
+func (p *EntryManager) FilterEntry(s SigRefresh, q string) []EntryNode {
 	defer func() {
 		p.cond.L.Lock()
 		p.state = Stopped
@@ -119,29 +128,29 @@ func (p *EntryManager) FilterEntry(query string) []EntryNode {
 	p.state = Filtering
 	p.cond.L.Unlock()
 
-	if entry := loadCalculator(query); entry != nil {
+	if entry := loadCalculator(q); entry != nil {
 		p.storage.emplace(entry)
-		query = entry.name
+		q = entry.name
 	}
 
-	return p.storage.transform(*p.filterAsync(query))
+	return p.storage.transform(*p.filterAsync(s, q))
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) filterSync(query string) *[]string {
+func (p *EntryManager) filterSync(s SigRefresh, q string) *[]string {
 	var strs []string
 	foundFn := func(str string) {
 		strs = append(strs, str)
-		emit(p.sigRefresh, p.storage.transform(strs))
+		emit(s, RefreshedMsg{p.storage.transform(strs)})
 	}
-	p.fzfDelegate.ExecuteSync(query, foundFn, p.readSync(0))
+	p.fzfDelegate.ExecuteSync(q, foundFn, p.readSync(0))
 	return &strs
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func (p *EntryManager) filterAsync(query string) *[]string {
+func (p *EntryManager) filterAsync(s SigRefresh, q string) *[]string {
 	var workers []*sync.WaitGroup
 	var strs []string
 	var mutex sync.Mutex
@@ -156,7 +165,9 @@ func (p *EntryManager) filterAsync(query string) *[]string {
 		mutex.Lock()
 		defer mutex.Unlock()
 		strs = append(strs, str)
-		emit(p.sigRefresh, p.storage.transform(strs))
+		if len(strs)%k_chunkSize == 0 {
+			emit(s, RefreshedMsg{p.storage.transform(strs)})
+		}
 	}
 
 	routines := runtime.NumCPU() - 1
@@ -170,7 +181,7 @@ func (p *EntryManager) filterAsync(query string) *[]string {
 		}
 		workers = append(
 			workers,
-			p.fzfDelegate.ExecuteAsync(query, foundFn, readFn))
+			p.fzfDelegate.ExecuteAsync(q, foundFn, readFn))
 	}
 	return &strs
 }

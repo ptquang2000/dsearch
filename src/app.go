@@ -15,7 +15,19 @@ import (
 
 ///////////////////////////////////////////////////////////////////////////////
 
+type LoadedMsg struct{ length int }
+type RefreshedMsg struct{ nodes []EntryNode }
+type SelectedMsg struct{ entry EntryNode }
+type FilteredMsg struct{ query string }
+
+///////////////////////////////////////////////////////////////////////////////
+
 type SigRefresh chan RefreshedMsg
+type SigLoad chan LoadedMsg
+type SigEntry chan *Entry
+
+///////////////////////////////////////////////////////////////////////////////
+
 type model struct {
 	ready  bool
 	height int
@@ -24,15 +36,12 @@ type model struct {
 	manager   IEntryManager
 	textInput textinput.Model
 
-	refreshCon SigRefresh
-	nodes      []EntryNode
-	cursor     int
+	refreshConn SigRefresh
+	loadConn    SigLoad
+	nodes       []EntryNode
+	length      int
+	cursor      int
 }
-
-type LoadedMsg struct{}
-type RefreshedMsg struct{ nodes []EntryNode }
-type SelectedMsg struct{ entry EntryNode }
-type QueryMsg struct{ query string }
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -58,11 +67,11 @@ func Run() {
 	}
 
 	fzfCfg := FzfConfig{exact: false, ignoreCase: true, algo: 0}
-	refreshSignal := make(SigRefresh)
 	p := tea.NewProgram(&model{
-		manager:    NewEntryManager(refreshSignal, fzfCfg),
-		refreshCon: refreshSignal,
-		cursor:     0,
+		manager:     NewEntryManager(fzfCfg),
+		refreshConn: make(SigRefresh),
+		loadConn:    make(SigLoad),
+		cursor:      0,
 	})
 	if _, err := p.Run(); err != nil {
 		log.Printf(`Alas, there's been an error: %v`, err)
@@ -77,19 +86,21 @@ func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.SetWindowTitle("DSearch"),
 		textinput.Blink,
-		onViewRefreshed(m.refreshCon),
-		onLoadEntries(m.manager),
+		onRefreshedMsg(m.refreshConn),
+		onLoadedMsg(m.loadConn),
+		loadEntries(m.loadConn, m.manager),
 	)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func onLoadEntries(manager IEntryManager) tea.Cmd {
+func loadEntries(s SigLoad, m IEntryManager) tea.Cmd {
 	return func() tea.Msg {
-		manager.LoadEntries(
-			func(c chan *Entry) { loadApplications(c) },
-			func(c chan *Entry) { loadFiles(c, true) })
-		return LoadedMsg{}
+		length := m.LoadEntries(
+			s,
+			func(c SigEntry) { loadApplications(c) },
+			func(c SigEntry) { loadFiles(c, true) })
+		return LoadedMsg{length: length}
 	}
 }
 
@@ -113,15 +124,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ready = true
 		}
 		return m, nil
+	case LoadedMsg:
+		m.length = msg.length
+		return m, onLoadedMsg(m.loadConn)
+	case FilteredMsg:
+		return m, onFilterEntry(m.refreshConn, m.manager, msg.query)
 	case RefreshedMsg:
 		m.nodes = msg.nodes
 		m.updateCursor()
-		return m, onViewRefreshed(m.refreshCon)
-	case LoadedMsg:
-		log.Printf(`Finished to load all entries`)
-		return m, onViewRefreshed(m.refreshCon)
-	case QueryMsg:
-		return m, onFilterEntry(m.manager, msg.query)
+		return m, onRefreshedMsg(m.refreshConn)
 	case SelectedMsg:
 		name := msg.entry.Value()
 		log.Printf(`Select entry %s`, name)
@@ -134,11 +145,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func onFilterEntry(manager IEntryManager, query string) tea.Cmd {
+func onLoadedMsg(s SigLoad) tea.Cmd {
 	return func() tea.Msg {
-		log.Printf(`Begin FilterEntry: %s`, query)
-		nodes := manager.FilterEntry(query)
-		log.Printf(`End FilterEntry: %s`, query)
+		defer log.Printf(`Finished to load all entries`)
+		return LoadedMsg(<-s)
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func onFilterEntry(s SigRefresh, m IEntryManager, q string) tea.Cmd {
+	return func() tea.Msg {
+		log.Printf(`Begin FilterEntry: %s`, q)
+		nodes := m.FilterEntry(s, q)
+		log.Printf(`End FilterEntry: %s`, q)
 		return RefreshedMsg{nodes: nodes}
 	}
 }
@@ -151,9 +171,9 @@ func (m *model) updateCursor() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-func onViewRefreshed(sigRefreshed chan RefreshedMsg) tea.Cmd {
+func onRefreshedMsg(s SigRefresh) tea.Cmd {
 	return func() tea.Msg {
-		return RefreshedMsg(<-sigRefreshed)
+		return RefreshedMsg(<-s)
 	}
 }
 
@@ -180,15 +200,30 @@ func (m *model) onTextInputChanged(msg tea.Msg) tea.Cmd {
 	lastQuery := m.textInput.Value()
 	m.textInput, cmd = m.textInput.Update(msg)
 	if query := m.textInput.Value(); lastQuery != query {
-		return tea.Batch(cmd, m.onFilterRequested(query))
+		if len(query) > 0 {
+			return tea.Batch(cmd, m.onFilterRequested(query))
+		} else {
+			return tea.Batch(cmd, m.clearView())
+		}
 	}
 	return nil
 }
 
-func (m *model) onFilterRequested(query string) tea.Cmd {
+///////////////////////////////////////////////////////////////////////////////
+
+func (m *model) clearView() tea.Cmd {
 	return func() tea.Msg {
-		m.manager.StopFilter()
-		return QueryMsg{query: query}
+		m.manager.StopFilter(true)
+		return RefreshedMsg{nodes: nil}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+func (m *model) onFilterRequested(q string) tea.Cmd {
+	return func() tea.Msg {
+		m.manager.StopFilter(false)
+		return FilteredMsg{query: q}
 	}
 }
 
@@ -224,7 +259,8 @@ func (m *model) View() string {
 
 	sb := new(strings.Builder)
 
-	sb.WriteString(fmt.Sprintf("\n %s\n", m.textInput.View()))
+	sb.WriteString(fmt.Sprintf("\n %s", m.textInput.View()))
+	sb.WriteString(fmt.Sprintf("\n Found %d/%d", len(m.nodes), m.length))
 
 	limit := m.height - 6
 	start := max(0, m.cursor+1-limit)
